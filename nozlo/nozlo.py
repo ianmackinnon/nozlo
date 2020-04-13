@@ -16,9 +16,7 @@ import logging
 import colorsys
 
 import numpy as np
-from OpenGL import GL
-from OpenGL import GLUT
-from OpenGL.GLU import *
+from OpenGL import GL, GLU, GLUT
 from OpenGL.GL.shaders import compileShader, compileProgram
 
 from nozlo.parser import Parser
@@ -168,7 +166,7 @@ void main() {
 
         GL.glMatrixMode(GL.GL_PROJECTION)
         GL.glLoadIdentity()
-        gluPerspective(self.view_angle, self.aspect, self.near_plane, self.far_plane)
+        GLU.gluPerspective(self.view_angle, self.aspect, self.near_plane, self.far_plane)
 
         # Camera
 
@@ -177,7 +175,7 @@ void main() {
         up2 = self.up
         if not self.angle(self.up, self.camera - self.aim):
             up2 = np.array([0, 1, 0])
-        gluLookAt(
+        GLU.gluLookAt(
             self.camera[0], self.camera[1], self.camera[2],
             self.aim[0], self.aim[1], self.aim[2],
             up2[0], up2[1], up2[2],
