@@ -259,7 +259,14 @@ void main() {
         glutPostRedisplay()
 
 
-    def update_camera(self, tumble_horiz=0, tumble_vert=0, scroll=0):
+    def update_camera(
+            self,
+            tumble_horiz=0,
+            tumble_vert=0,
+            dolly_horiz=0,
+            dolly_vert=0,
+            scroll=0
+    ):
         cam_v = (self.camera - self.aim)
         cam_dist = np.linalg.norm(cam_v)
         cam_v /= cam_dist
@@ -293,6 +300,13 @@ void main() {
         ]))
         cam_v2 *= cam_dist
 
+        horiz = self.unit(np.cross(self.up, cam_v))
+        vert = self.unit(np.cross(cam_v, horiz))
+
+        dolly = horiz * dolly_horiz + vert * dolly_vert
+
+        self.aim += dolly * cam_dist * 0.002
+
         camera2 = cam_v2 + self.aim
 
         self.camera[0] = camera2[0]
@@ -321,14 +335,22 @@ void main() {
 
         tumble_horiz = 0
         tumble_vert = 0
+        dolly_horiz = 0
+        dolly_vert = 0
 
         if self.button[0]:
             tumble_horiz = -float(move[0]) * 0.01
             tumble_vert = float(move[1]) * 0.01
 
+        if self.button[2]:
+            dolly_horiz = -float(move[0])
+            dolly_vert = float(move[1])
+
         self.update_camera(
             tumble_horiz=tumble_horiz,
             tumble_vert=tumble_vert,
+            dolly_horiz=dolly_horiz,
+            dolly_vert=dolly_vert,
         )
 
         self.update_cursor(x, y)
