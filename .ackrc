@@ -1,0 +1,6 @@
+--ignore-directory=.git
+--ignore-directory=.tox
+--ignore-directory=.eggs
+--ignore-directory=.pytest_cache
+--ignore-directory=build
+--ignore-directory=*.egg-info
