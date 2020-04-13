@@ -11,6 +11,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import time
 import math
 import logging
 import colorsys
@@ -18,6 +19,7 @@ import colorsys
 import numpy as np
 from OpenGL import GL, GLU, GLUT
 from OpenGL.GL.shaders import compileShader, compileProgram
+from OpenGL.arrays.vbo import VBO
 
 from nozlo.parser import Parser
 
@@ -33,7 +35,7 @@ POSITION_VECTOR_SIZE = 3
 class Nozlo():
     bed_color = (0.3, 0.3, 0.3)
     background_color = (0.18, 0.18, 0.18)
-
+    high_feedrate = 100 * 60
 
     def __init__(self):
         self.title = None
@@ -58,6 +60,11 @@ class Nozlo():
         self.lines_geo = None
         self.lines_bed = None
         self.lines_cam = None
+
+        self.layers = None
+
+        self.draw_layer_max = None
+        self.update_geo_time = None
 
         self.line_buffer_length = None
         self.line_buffer_position = None
@@ -123,54 +130,72 @@ void main() {
         self.modelview_matrix_uniform = GL.glGetUniformLocation(self.program, "uMVMatrix")
 
 
-    def add_lines_bed(self, line_data, color_data):
+    def add_lines_bed(self, line_p, line_c):
         for (start, end) in self.lines_bed:
-            line_data += [start[0], start[1], start[2]]
-            line_data += [end[0], end[1], end[2]]
-            color_data += self.bed_color
-            color_data += self.bed_color
+            line_p += [start[0], start[1], start[2]]
+            line_p += [end[0], end[1], end[2]]
+            line_c += self.bed_color
+            line_c += self.bed_color
             self.line_buffer_length += 2
 
 
-    def add_lines_geo(self, line_data, color_data):
-        max_feedrate = 0
-        for (start, end, width, feedrate) in self.lines_geo:
-            max_feedrate = max(max_feedrate, feedrate)
+    def add_lines_geo(self, line_p, line_c):
+        center = None
+        bbox = None
+
+        # for (start, end, width, feedrate) in self.lines_geo:
+        #     max_feedrate = max(max_feedrate, feedrate)
 
         for (start, end, width, feedrate) in self.lines_geo:
-            line_data += [start[0], start[1], start[2]]
-            line_data += [end[0], end[1], end[2]]
+            if end[2] > self.layers[self.draw_layer_max]:
+                continue
 
-            hsv = colorsys.hsv_to_rgb(
-                0.8 * (1 - (feedrate / max_feedrate)),
-                1,
-                0.8 if width else 0.5
-            )
-            color_data += hsv
-            color_data += hsv
+            line_p += [start[0], start[1], start[2]]
+            line_p += [end[0], end[1], end[2]]
+
+            if feedrate < self.high_feedrate:
+                color = colorsys.hsv_to_rgb(
+                    0.8 * (1 - (feedrate / self.high_feedrate)),
+                    1,
+                    0.8 if width else 0.5
+                )
+            else:
+                color = (0.8, 0.8, 0.8)
+
+            line_c += color
+            line_c += color
 
             self.line_buffer_length += 2
 
 
     def init_line_buffer(self):
-
-        line_data = []
-        color_data = []
-        self.line_buffer_length = 0
-
-        self.add_lines_bed(line_data, color_data)
-        self.add_lines_geo(line_data, color_data)
-
         self.line_array = GL.glGenVertexArrays(1)
         self.line_buffer_position = GL.glGenBuffers(1)
         self.line_buffer_color = GL.glGenBuffers(1)
+
+
+    def load_line_buffer(self):
+        LOG.debug("load line buffer start")
+        start = time.time()
+
+        line_p = []
+        line_c = []
+        self.line_buffer_length = 0
+
+        self.add_lines_bed(line_p, line_c)
+        self.add_lines_geo(line_p, line_c)
+
+        # self.line_p = np.require(line_p, np.float32, 'F')
+        # self.line_p_vbo = VBO(self.line_p)
+        # self.line_c = np.require(line_c, np.float32, 'F')
+        # self.line_c_vbo = VBO(self.line_c)
 
         GL.glBindVertexArray(self.line_array)
 
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_position)
         GL.glBufferData(
             GL.GL_ARRAY_BUFFER,
-            np.array(line_data, dtype='float32'),
+            np.array(line_p, dtype='float32'),
             GL.GL_STATIC_DRAW
         )
         GL.glVertexAttribPointer(0, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
@@ -178,13 +203,20 @@ void main() {
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_color)
         GL.glBufferData(
             GL.GL_ARRAY_BUFFER,
-            np.array(color_data, dtype='float32'),
+            np.array(line_c, dtype='float32'),
             GL.GL_STATIC_DRAW
         )
         GL.glVertexAttribPointer(1, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
 
+        duration = time.time() - start
+        LOG.debug(f"load line buffer end {duration:0.2f}")
+
+        GLUT.glutPostRedisplay()
+
 
     def display(self):
+        LOG.debug("display start")
+        start = time.time()
 
         # Projection
 
@@ -231,7 +263,7 @@ void main() {
         # glEnable(GL_POLYGON_SMOOTH)
         # glEnable(GL_ALPHA_TEST)
         # glAlphaFunc(GL_ALWAYS, 0)
-        # glShadeModel(GL_SMOOTH);
+        # glShadeModel(GL_SMOOTH)
         # glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
         # glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE)
 
@@ -249,6 +281,9 @@ void main() {
 
         GLUT.glutSwapBuffers()
 
+        duration = time.time() - start
+        LOG.debug(f"display end {duration:0.2f}")
+
 
     def update_cursor(self, x, y):
         self.cursor[0] = x
@@ -264,14 +299,15 @@ void main() {
 
 
     def special(self, key, x, y):
-        if key == GLUT.GLUT_KEY_LEFT:
-            self.camera[0] -= 1
-        if key == GLUT.GLUT_KEY_RIGHT:
-            self.camera[0] += 1
+        if key == GLUT.GLUT_KEY_HOME:
+            self.update_geo(relative="first")
+        if key == GLUT.GLUT_KEY_END:
+            self.update_geo(relative="last")
+
         if key == GLUT.GLUT_KEY_DOWN:
-            self.camera[1] -= 1
+            self.update_geo(layer=-1)
         if key == GLUT.GLUT_KEY_UP:
-            self.camera[1] += 1
+            self.update_geo(layer=1)
 
         self.update_cursor(x, y)
         GLUT.glutPostRedisplay()
@@ -332,6 +368,24 @@ void main() {
         self.camera[2] = camera2[2]
 
 
+    def update_geo(self, layer=0, relative=None):
+        last = len(self.layers) - 1
+        target_layer = self.draw_layer_max
+
+        if relative == "first":
+            target_layer = 0
+        if relative == "last":
+            target_layer = last
+
+        target_layer += layer
+        target_layer = max(0, min(last, target_layer))
+
+        if target_layer != self.draw_layer_max:
+            self.draw_layer_max = target_layer
+            LOG.info(f"Drawing {self.draw_layer_max + 1}/{len(self.layers)} layers.")
+            self.update_geo_time = time.time()
+
+
     def mouse(self, button, state, x, y):
         self.button[button] = not state
 
@@ -376,7 +430,7 @@ void main() {
 
 
     def reshape(self, w, h):
-        self.aspect = w / h if h else 1;
+        self.aspect = w / h if h else 1
         GL.glViewport(0, 0, w, h)
         GLUT.glutPostRedisplay()
 
@@ -388,6 +442,17 @@ void main() {
 
         with gcode_path.open() as fp:
             self.lines_geo = parser.parse(fp)
+
+        layers = set()
+
+        for (start, end, width, feedrate) in self.lines_geo:
+            layers.add(start[2])
+            layers.add(end[2])
+
+        self.layers = sorted(list(layers))
+        self.draw_layer_max = (len(self.layers) -1)
+
+        LOG.info(f"Loaded {len(self.layers)} layers.")
 
 
     def load_bed(self):
@@ -435,6 +500,13 @@ void main() {
                     ],
                 ]
 
+    def tick(self):
+        if self.update_geo_time:
+            now = time.time()
+            elapsed = now - self.update_geo_time
+            if elapsed > 0.1:
+                self.update_geo_time = None
+                self.load_line_buffer()
 
 
     def run(self):
@@ -455,6 +527,7 @@ void main() {
 
         self.init_program()
         self.init_line_buffer()
+        self.load_line_buffer()
 
         GLUT.glutDisplayFunc(self.display)
         GLUT.glutReshapeFunc(self.reshape)
@@ -464,4 +537,6 @@ void main() {
         GLUT.glutMotionFunc(self.motion)
         GLUT.glutPassiveMotionFunc(self.motion)
 
-        GLUT.glutMainLoop();
+        GLUT.glutIdleFunc(self.tick)
+
+        GLUT.glutMainLoop()
