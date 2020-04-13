@@ -222,7 +222,7 @@ void main() {
 
         length = len(self.line_data) // POSITION_VECTOR_SIZE
 
-        glDrawArrays(GL_LINES, 0, int(length * 0.9))
+        glDrawArrays(GL_LINES, 0, length)
         glDisableVertexAttribArray(0)
         glDisableVertexAttribArray(1)
         GL.glUseProgram(0)
