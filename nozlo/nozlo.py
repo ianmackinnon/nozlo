@@ -31,6 +31,10 @@ POSITION_VECTOR_SIZE = 3
 
 
 class Nozlo():
+    bed_color = (0.3, 0.3, 0.3)
+    background_color = (0.18, 0.18, 0.18)
+
+
     def __init__(self):
         self.title = None
         self.window = None
@@ -51,13 +55,16 @@ class Nozlo():
         self.aim = np.array([107, 107, 0], dtype="float32")
         self.up = np.array([0, 0, 1], dtype="float32")
 
-        self.background = 0.18, 0.18, 0.18, 0.0
+        self.lines_geo = None
+        self.lines_bed = None
+        self.lines_cam = None
 
-        self.lines = None
         self.line_buffer_length = None
         self.line_buffer_position = None
         self.line_buffer_color = None
-        self.layer_array = None
+        self.line_array = None
+
+        self.load_bed()
 
 
     @staticmethod
@@ -116,20 +123,23 @@ void main() {
         self.modelview_matrix_uniform = GL.glGetUniformLocation(self.program, "uMVMatrix")
 
 
-    def init_line_buffer(self):
+    def add_lines_bed(self, line_data, color_data):
+        for (start, end) in self.lines_bed:
+            line_data += [start[0], start[1], start[2]]
+            line_data += [end[0], end[1], end[2]]
+            color_data += self.bed_color
+            color_data += self.bed_color
+            self.line_buffer_length += 2
 
-        line_data = []
-        color_data = []
-        self.line_buffer_length = 0
 
+    def add_lines_geo(self, line_data, color_data):
         max_feedrate = 0
-        for (start, end, width, feedrate) in self.lines:
+        for (start, end, width, feedrate) in self.lines_geo:
             max_feedrate = max(max_feedrate, feedrate)
 
-        for (start, end, width, feedrate) in self.lines:
-            z_scale = 1
-            line_data += [start[0], start[1], start[2] * z_scale]
-            line_data += [end[0], end[1], end[2] * z_scale]
+        for (start, end, width, feedrate) in self.lines_geo:
+            line_data += [start[0], start[1], start[2]]
+            line_data += [end[0], end[1], end[2]]
 
             hsv = colorsys.hsv_to_rgb(
                 0.8 * (1 - (feedrate / max_feedrate)),
@@ -142,22 +152,36 @@ void main() {
             self.line_buffer_length += 2
 
 
+    def init_line_buffer(self):
+
+        line_data = []
+        color_data = []
+        self.line_buffer_length = 0
+
+        self.add_lines_bed(line_data, color_data)
+        self.add_lines_geo(line_data, color_data)
+
+        self.line_array = GL.glGenVertexArrays(1)
         self.line_buffer_position = GL.glGenBuffers(1)
+        self.line_buffer_color = GL.glGenBuffers(1)
+
+        GL.glBindVertexArray(self.line_array)
+
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_position)
         GL.glBufferData(
             GL.GL_ARRAY_BUFFER,
             np.array(line_data, dtype='float32'),
             GL.GL_STATIC_DRAW
         )
+        GL.glVertexAttribPointer(0, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
 
-        self.line_buffer_color = GL.glGenBuffers(1)
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_color)
         GL.glBufferData(
             GL.GL_ARRAY_BUFFER,
             np.array(color_data, dtype='float32'),
             GL.GL_STATIC_DRAW
         )
-
+        GL.glVertexAttribPointer(1, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
 
 
     def display(self):
@@ -194,7 +218,7 @@ void main() {
 
         # Background
 
-        GL.glClearColor(*self.background)
+        GL.glClearColor(*self.background_color, 0.0)
         GL.glClear(GL.GL_COLOR_BUFFER_BIT)
 
         # Draw Layers
@@ -213,20 +237,12 @@ void main() {
 
         GL.glLineWidth(1.0)
 
-        self.layer_array = GL.glGenVertexArrays(1)
-
-        GL.glBindVertexArray(self.layer_array)
-        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_position)
-        GL.glVertexAttribPointer(0, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
-        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_color)
-        GL.glVertexAttribPointer(1, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
-
         GL.glEnableVertexAttribArray(0)
         GL.glEnableVertexAttribArray(1)
-
         GL.glDrawArrays(GL.GL_LINES, 0, self.line_buffer_length)
         GL.glDisableVertexAttribArray(0)
         GL.glDisableVertexAttribArray(1)
+
         GL.glUseProgram(0)
 
         # Update
@@ -365,13 +381,60 @@ void main() {
         GLUT.glutPostRedisplay()
 
 
-    def load(self, gcode_path):
+    def load_geo(self, gcode_path):
         parser = Parser()
 
         self.title = f"Nozlo: {gcode_path.name}"
 
         with gcode_path.open() as fp:
-            self.lines = parser.parse(fp)
+            self.lines_geo = parser.parse(fp)
+
+
+    def load_bed(self):
+        bed_width = 214
+        bed_length = 214
+        grid_step = 30
+        grid_x = 7
+        grid_y = 7
+        cross_xy = 10
+
+        self.lines_bed = [
+            [
+                [0, 0, 0],
+                [bed_width, 0, 0],
+            ],
+            [
+                [bed_width, 0, 0],
+                [bed_width, bed_length, 0],
+            ],
+            [
+                [bed_width, bed_length, 0],
+                [0, bed_length, 0],
+            ],
+            [
+                [0, bed_length, 0],
+                [0, 0, 0],
+            ],
+        ]
+
+        cx = bed_width / 2
+        cy = bed_length / 2
+
+        for x in range(grid_x):
+            px = cx + grid_step * (x - (grid_x - 1) / 2)
+            for y in range(grid_y):
+                py = cy + grid_step * (y - (grid_y - 1) / 2)
+                self.lines_bed += [
+                    [
+                        [px - cross_xy / 2, py, 0],
+                        [px + cross_xy / 2, py, 0],
+                    ],
+                    [
+                        [px, py - cross_xy / 2, 0],
+                        [px, py + cross_xy / 2, 0],
+                    ],
+                ]
+
 
 
     def run(self):

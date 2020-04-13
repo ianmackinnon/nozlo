@@ -61,7 +61,7 @@ def main():
         log.setLevel(level)
 
     app = Nozlo()
-    app.load(args.gcode)
+    app.load_geo(args.gcode)
     app.run()
 
 
