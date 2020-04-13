@@ -53,8 +53,8 @@ class Nozlo():
         self.near_plane = 0.1
         self.far_plane = 1000
 
-        self.camera = np.array([214 + 100, -100, 200], dtype="float32")
-        self.aim = np.array([107, 107, 0], dtype="float32")
+        self.camera = np.array([100, -100, 100], dtype="float32")
+        self.aim = np.array([0, 0, 0], dtype="float32")
         self.up = np.array([0, 0, 1], dtype="float32")
 
         self.lines_geo = None
@@ -65,6 +65,9 @@ class Nozlo():
 
         self.draw_layer_max = None
         self.update_geo_time = None
+
+        self.model_center = None
+        self.model_size = None
 
         self.line_buffer_length = None
         self.line_buffer_position = None
@@ -294,6 +297,9 @@ void main() {
         if ord(key) == 27 or key == b'q':
             GLUT.glutLeaveMainLoop()
 
+        if key == b'f':
+            self.reset_camera()
+
         self.update_cursor(x, y)
         GLUT.glutPostRedisplay()
 
@@ -311,6 +317,20 @@ void main() {
 
         self.update_cursor(x, y)
         GLUT.glutPostRedisplay()
+
+
+    def reset_camera(self):
+        cam_v = (self.camera - self.aim)
+        cam_dist = np.linalg.norm(cam_v)
+        cam_v /= cam_dist
+
+        self.aim[0] = self.model_center[0]
+        self.aim[1] = self.model_center[1]
+        self.aim[2] = self.model_center[2]
+
+        cam_v2 = cam_v * self.model_size
+
+        self.camera = self.aim + cam_v2
 
 
     def update_camera(
@@ -445,9 +465,33 @@ void main() {
 
         layers = set()
 
+        model_center = [0, 0, 0]
+        model_min = [None, None, None]
+        model_max = [None, None, None]
+        model_count = 0
+
         for (start, end, width, feedrate) in self.lines_geo:
+            if width and end[0] >= 0 and end[1] >= 0:
+                # Extrusion in build volume
+                for i in range(3):
+                    model_center[i] += end[i]
+                    if not model_count:
+                        model_min[i] = end[i]
+                        model_max[i] = end[i]
+                    else:
+                        model_min[i] = min(model_min[i], end[i])
+                        model_max[i] = max(model_max[i], end[i])
+                model_count += 1
+
             layers.add(start[2])
             layers.add(end[2])
+
+        self.model_center = [v / model_count for v in model_center]
+
+        self.model_size = np.linalg.norm(
+            np.array(model_max, dtype="float32") -
+            np.array(model_min, dtype="float32")
+        )
 
         self.layers = sorted(list(layers))
         self.draw_layer_max = (len(self.layers) -1)
@@ -525,6 +569,7 @@ void main() {
 
         self.window = GLUT.glutCreateWindow(self.title)
 
+        self.reset_camera()
         self.init_program()
         self.init_line_buffer()
         self.load_line_buffer()
