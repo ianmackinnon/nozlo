@@ -15,13 +15,11 @@ import math
 import logging
 import colorsys
 
+import numpy as np
 from OpenGL import GL
 from OpenGL import GLUT
 from OpenGL.GLU import *
-from OpenGL.GL import *
 from OpenGL.GL.shaders import compileShader, compileProgram
-from array import array
-import numpy as np
 
 from nozlo.parser import Parser
 
@@ -57,6 +55,7 @@ class Nozlo():
 
         self.background = 0.18, 0.18, 0.18, 0.0
 
+        self.lines = None
         self.line_buffer_length = None
         self.line_buffer_position = None
         self.line_buffer_color = None
@@ -115,8 +114,8 @@ void main() {
             compileShader(frag, GL.GL_FRAGMENT_SHADER)
         )
 
-        self.projection_matrix_uniform = glGetUniformLocation(self.program, 'uPMatrix')
-        self.modelview_matrix_uniform = glGetUniformLocation(self.program, "uMVMatrix")
+        self.projection_matrix_uniform = GL.glGetUniformLocation(self.program, 'uPMatrix')
+        self.modelview_matrix_uniform = GL.glGetUniformLocation(self.program, "uMVMatrix")
 
 
     def init_line_buffer(self):
@@ -145,20 +144,20 @@ void main() {
             self.line_buffer_length += 2
 
 
-        self.line_buffer_position = glGenBuffers(1)
-        glBindBuffer(GL_ARRAY_BUFFER, self.line_buffer_position)
-        glBufferData(
-            GL_ARRAY_BUFFER,
+        self.line_buffer_position = GL.glGenBuffers(1)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_position)
+        GL.glBufferData(
+            GL.GL_ARRAY_BUFFER,
             np.array(line_data, dtype='float32'),
-            GL_STATIC_DRAW
+            GL.GL_STATIC_DRAW
         )
 
-        self.line_buffer_color = glGenBuffers(1)
-        glBindBuffer(GL_ARRAY_BUFFER, self.line_buffer_color)
-        glBufferData(
-            GL_ARRAY_BUFFER,
+        self.line_buffer_color = GL.glGenBuffers(1)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_color)
+        GL.glBufferData(
+            GL.GL_ARRAY_BUFFER,
             np.array(color_data, dtype='float32'),
-            GL_STATIC_DRAW
+            GL.GL_STATIC_DRAW
         )
 
 
@@ -167,14 +166,14 @@ void main() {
 
         # Projection
 
-        glMatrixMode(GL_PROJECTION)
-        glLoadIdentity()
+        GL.glMatrixMode(GL.GL_PROJECTION)
+        GL.glLoadIdentity()
         gluPerspective(self.view_angle, self.aspect, self.near_plane, self.far_plane)
 
         # Camera
 
-        glMatrixMode(GL_MODELVIEW)
-        glLoadIdentity()
+        GL.glMatrixMode(GL.GL_MODELVIEW)
+        GL.glLoadIdentity()
         up2 = self.up
         if not self.angle(self.up, self.camera - self.aim):
             up2 = np.array([0, 1, 0])
@@ -188,21 +187,21 @@ void main() {
 
         GL.glUseProgram(self.program)
 
-        glUniformMatrix4fv(
-            self.projection_matrix_uniform, 1, GL_FALSE,
-            glGetFloatv(GL_PROJECTION_MATRIX))
-        glUniformMatrix4fv(
-            self.modelview_matrix_uniform, 1, GL_FALSE,
-            glGetFloatv(GL_MODELVIEW_MATRIX))
+        GL.glUniformMatrix4fv(
+            self.projection_matrix_uniform, 1, GL.GL_FALSE,
+            GL.glGetFloatv(GL.GL_PROJECTION_MATRIX))
+        GL.glUniformMatrix4fv(
+            self.modelview_matrix_uniform, 1, GL.GL_FALSE,
+            GL.glGetFloatv(GL.GL_MODELVIEW_MATRIX))
 
         # Background
 
-        glClearColor(*self.background)
-        glClear(GL_COLOR_BUFFER_BIT)
+        GL.glClearColor(*self.background)
+        GL.glClear(GL.GL_COLOR_BUFFER_BIT)
 
         # Draw Layers
 
-        glEnable(GL_MULTISAMPLE)
+        GL.glEnable(GL.GL_MULTISAMPLE)
         # glEnable(GL_BLEND)
         # glEnable(GL_DEPTH_TEST)
         # glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
@@ -214,22 +213,22 @@ void main() {
         # glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
         # glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE)
 
-        glLineWidth(1.0)
+        GL.glLineWidth(1.0)
 
-        self.layer_array = glGenVertexArrays(1)
+        self.layer_array = GL.glGenVertexArrays(1)
 
-        glBindVertexArray(self.layer_array)
-        glBindBuffer(GL_ARRAY_BUFFER, self.line_buffer_position)
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, None)
-        glBindBuffer(GL_ARRAY_BUFFER, self.line_buffer_color)
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, None)
+        GL.glBindVertexArray(self.layer_array)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_position)
+        GL.glVertexAttribPointer(0, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_color)
+        GL.glVertexAttribPointer(1, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
 
-        glEnableVertexAttribArray(0)
-        glEnableVertexAttribArray(1)
+        GL.glEnableVertexAttribArray(0)
+        GL.glEnableVertexAttribArray(1)
 
-        glDrawArrays(GL_LINES, 0, self.line_buffer_length)
-        glDisableVertexAttribArray(0)
-        glDisableVertexAttribArray(1)
+        GL.glDrawArrays(GL.GL_LINES, 0, self.line_buffer_length)
+        GL.glDisableVertexAttribArray(0)
+        GL.glDisableVertexAttribArray(1)
         GL.glUseProgram(0)
 
         # Update
@@ -364,7 +363,7 @@ void main() {
 
     def reshape(self, w, h):
         self.aspect = w / h if h else 1;
-        glViewport(0, 0, w, h)
+        GL.glViewport(0, 0, w, h)
         GLUT.glutPostRedisplay()
 
 
