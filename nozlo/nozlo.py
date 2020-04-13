@@ -16,7 +16,7 @@ import logging
 import colorsys
 
 from OpenGL import GL
-from OpenGL.GLUT import *
+from OpenGL import GLUT
 from OpenGL.GLU import *
 from OpenGL.GL import *
 from OpenGL.GL.shaders import compileShader, compileProgram
@@ -234,7 +234,7 @@ void main() {
 
         # Update
 
-        glutSwapBuffers()
+        GLUT.glutSwapBuffers()
 
 
     def update_cursor(self, x, y):
@@ -244,24 +244,24 @@ void main() {
 
     def keyboard(self, key, x, y):
         if ord(key) == 27 or key == b'q':
-            glutLeaveMainLoop()
+            GLUT.glutLeaveMainLoop()
 
         self.update_cursor(x, y)
-        glutPostRedisplay()
+        GLUT.glutPostRedisplay()
 
 
     def special(self, key, x, y):
-        if key == GLUT_KEY_LEFT:
+        if key == GLUT.GLUT_KEY_LEFT:
             self.camera[0] -= 1
-        if key == GLUT_KEY_RIGHT:
+        if key == GLUT.GLUT_KEY_RIGHT:
             self.camera[0] += 1
-        if key == GLUT_KEY_DOWN:
+        if key == GLUT.GLUT_KEY_DOWN:
             self.camera[1] -= 1
-        if key == GLUT_KEY_UP:
+        if key == GLUT.GLUT_KEY_UP:
             self.camera[1] += 1
 
         self.update_cursor(x, y)
-        glutPostRedisplay()
+        GLUT.glutPostRedisplay()
 
 
     def update_camera(
@@ -327,7 +327,7 @@ void main() {
         if button == 4 and state == 0:
             self.update_camera(scroll=1)
 
-        glutPostRedisplay()
+        GLUT.glutPostRedisplay()
 
 
     def motion(self, x, y):
@@ -359,13 +359,13 @@ void main() {
         )
 
         self.update_cursor(x, y)
-        glutPostRedisplay()
+        GLUT.glutPostRedisplay()
 
 
     def reshape(self, w, h):
         self.aspect = w / h if h else 1;
         glViewport(0, 0, w, h)
-        glutPostRedisplay()
+        GLUT.glutPostRedisplay()
 
 
     def load(self, gcode_path):
@@ -378,25 +378,30 @@ void main() {
 
 
     def run(self):
-        glutInit()
-        glutSetOption(GLUT_MULTISAMPLE, 2)
-        glutInitDisplayMode(
-            GLUT_DOUBLE | GLUT_ALPHA | GLUT_DEPTH | GLUT_STENCIL | GLUT_MULTISAMPLE)
-        glutInitWindowSize(1200, 720)
+        GLUT.glutInit()
+        GLUT.glutSetOption(GLUT.GLUT_MULTISAMPLE, 2)
+        GLUT.glutInitDisplayMode(
+            GLUT.GLUT_DOUBLE |
+            GLUT.GLUT_ALPHA |
+            GLUT.GLUT_DEPTH |
+            GLUT.GLUT_STENCIL |
+            GLUT.GLUT_MULTISAMPLE
+        )
+        GLUT.glutInitWindowSize(1200, 720)
 
-        glutInitWindowPosition(1200, 720)
+        GLUT.glutInitWindowPosition(1200, 720)
 
-        self.window = glutCreateWindow(self.title)
+        self.window = GLUT.glutCreateWindow(self.title)
 
         self.init_program()
         self.init_line_buffer()
 
-        glutDisplayFunc(self.display)
-        glutReshapeFunc(self.reshape)
-        glutKeyboardFunc(self.keyboard)
-        glutSpecialFunc(self.special)
-        glutMouseFunc(self.mouse)
-        glutMotionFunc(self.motion)
-        glutPassiveMotionFunc(self.motion)
+        GLUT.glutDisplayFunc(self.display)
+        GLUT.glutReshapeFunc(self.reshape)
+        GLUT.glutKeyboardFunc(self.keyboard)
+        GLUT.glutSpecialFunc(self.special)
+        GLUT.glutMouseFunc(self.mouse)
+        GLUT.glutMotionFunc(self.motion)
+        GLUT.glutPassiveMotionFunc(self.motion)
 
-        glutMainLoop();
+        GLUT.glutMainLoop();
