@@ -64,6 +64,8 @@ class Nozlo():
         self.layers = None
 
         self.draw_layer_max = None
+        self.draw_layer_min = None
+        self.draw_single_layer = False
         self.update_geo_time = None
 
         self.model_center = None
@@ -146,11 +148,11 @@ void main() {
         center = None
         bbox = None
 
-        # for (start, end, width, feedrate) in self.lines_geo:
-        #     max_feedrate = max(max_feedrate, feedrate)
+        z_min = self.layers[self.draw_layer_min]
+        z_max = self.layers[self.draw_layer_max]
 
         for (start, end, width, feedrate) in self.lines_geo:
-            if end[2] > self.layers[self.draw_layer_max]:
+            if not (z_min <= end[2] <= z_max):
                 continue
 
             line_p += [start[0], start[1], start[2]]
@@ -299,6 +301,8 @@ void main() {
 
         if key == b'f':
             self.reset_camera()
+        if key == b'd':
+            self.update_geo(toggle_single=True)
 
         self.update_cursor(x, y)
         GLUT.glutPostRedisplay()
@@ -388,22 +392,37 @@ void main() {
         self.camera[2] = camera2[2]
 
 
-    def update_geo(self, layer=0, relative=None):
+    def update_geo(self, layer=0, relative=None, toggle_single=None):
         last = len(self.layers) - 1
-        target_layer = self.draw_layer_max
+        target_min = self.draw_layer_min
+        target_max = self.draw_layer_max
 
         if relative == "first":
-            target_layer = 0
+            target_max = 0
         if relative == "last":
-            target_layer = last
+            target_max = last
 
-        target_layer += layer
-        target_layer = max(0, min(last, target_layer))
+        target_max += layer
+        target_max = max(0, min(last, target_max))
 
-        if target_layer != self.draw_layer_max:
-            self.draw_layer_max = target_layer
+        if toggle_single:
+            self.draw_single_layer = not self.draw_single_layer
+
+        if self.draw_single_layer:
+            target_min = target_max
+        else:
+            target_min = 0
+
+        if (
+                target_max != self.draw_layer_max or
+                target_min != self.draw_layer_min
+        ):
+            self.draw_layer_max = target_max
+            self.draw_layer_min = target_min
             LOG.info(f"Drawing {self.draw_layer_max + 1}/{len(self.layers)} layers.")
             self.update_geo_time = time.time()
+
+
 
 
     def mouse(self, button, state, x, y):
@@ -494,6 +513,7 @@ void main() {
         )
 
         self.layers = sorted(list(layers))
+        self.draw_layer_min = 0
         self.draw_layer_max = (len(self.layers) -1)
 
         LOG.info(f"Loaded {len(self.layers)} layers.")
