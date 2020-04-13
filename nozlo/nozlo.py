@@ -36,6 +36,9 @@ POSITION_VECTOR_SIZE = 3
 
 class Nozlo():
     def __init__(self):
+        self.title = None
+        self.window = None
+
         self.program = None
         self.projection_matrix_uniform = None
         self.modelview_matrix_uniform = None
@@ -54,11 +57,10 @@ class Nozlo():
 
         self.background = 0.18, 0.18, 0.18, 0.0
 
-        self.layer_buffer_position = None
-        self.layer_buffer_color = None
+        self.line_buffer_length = None
+        self.line_buffer_position = None
+        self.line_buffer_color = None
         self.layer_array = None
-
-        self.line_data = None
 
 
     @staticmethod
@@ -117,11 +119,11 @@ void main() {
         self.modelview_matrix_uniform = glGetUniformLocation(self.program, "uMVMatrix")
 
 
-    def init_layer_buffer(self):
+    def init_line_buffer(self):
 
-        self.line_data = []
+        line_data = []
         color_data = []
-
+        self.line_buffer_length = 0
 
         max_feedrate = 0
         for (start, end, width, feedrate) in self.lines:
@@ -129,25 +131,30 @@ void main() {
 
         for (start, end, width, feedrate) in self.lines:
             z_scale = 1
-            self.line_data += [start[0], start[1], start[2] * z_scale]
-            self.line_data += [end[0], end[1], end[2] * z_scale]
-            hue = 0.8 * (1 - (feedrate / max_feedrate))
-            value = 0.8 if width else 0.6
-            c = colorsys.hsv_to_rgb(hue, 1, value)
-            color_data += [c, c, c]
-            color_data += [c, c, c]
+            line_data += [start[0], start[1], start[2] * z_scale]
+            line_data += [end[0], end[1], end[2] * z_scale]
+
+            hsv = colorsys.hsv_to_rgb(
+                0.8 * (1 - (feedrate / max_feedrate)),
+                1,
+                0.8 if width else 0.5
+            )
+            color_data += hsv
+            color_data += hsv
+
+            self.line_buffer_length += 2
 
 
-        self.layer_buffer_position = glGenBuffers(1)
-        glBindBuffer(GL_ARRAY_BUFFER, self.layer_buffer_position)
+        self.line_buffer_position = glGenBuffers(1)
+        glBindBuffer(GL_ARRAY_BUFFER, self.line_buffer_position)
         glBufferData(
             GL_ARRAY_BUFFER,
-            np.array(self.line_data, dtype='float32'),
+            np.array(line_data, dtype='float32'),
             GL_STATIC_DRAW
         )
 
-        self.layer_buffer_color = glGenBuffers(1)
-        glBindBuffer(GL_ARRAY_BUFFER, self.layer_buffer_color)
+        self.line_buffer_color = glGenBuffers(1)
+        glBindBuffer(GL_ARRAY_BUFFER, self.line_buffer_color)
         glBufferData(
             GL_ARRAY_BUFFER,
             np.array(color_data, dtype='float32'),
@@ -212,17 +219,15 @@ void main() {
         self.layer_array = glGenVertexArrays(1)
 
         glBindVertexArray(self.layer_array)
-        glBindBuffer(GL_ARRAY_BUFFER, self.layer_buffer_position)
+        glBindBuffer(GL_ARRAY_BUFFER, self.line_buffer_position)
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, None)
-        glBindBuffer(GL_ARRAY_BUFFER, self.layer_buffer_color)
+        glBindBuffer(GL_ARRAY_BUFFER, self.line_buffer_color)
         glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, None)
 
         glEnableVertexAttribArray(0)
         glEnableVertexAttribArray(1)
 
-        length = len(self.line_data) // POSITION_VECTOR_SIZE
-
-        glDrawArrays(GL_LINES, 0, length)
+        glDrawArrays(GL_LINES, 0, self.line_buffer_length)
         glDisableVertexAttribArray(0)
         glDisableVertexAttribArray(1)
         GL.glUseProgram(0)
@@ -366,6 +371,8 @@ void main() {
     def load(self, gcode_path):
         parser = Parser()
 
+        self.title = f"Nozlo: {gcode_path.name}"
+
         with gcode_path.open() as fp:
             self.lines = parser.parse(fp)
 
@@ -379,10 +386,10 @@ void main() {
 
         glutInitWindowPosition(1200, 720)
 
-        window = glutCreateWindow("Nozlo")
+        self.window = glutCreateWindow(self.title)
 
         self.init_program()
-        self.init_layer_buffer()
+        self.init_line_buffer()
 
         glutDisplayFunc(self.display)
         glutReshapeFunc(self.reshape)
