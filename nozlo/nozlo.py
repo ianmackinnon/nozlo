@@ -19,7 +19,6 @@ import colorsys
 import numpy as np
 from OpenGL import GL, GLU, GLUT
 from OpenGL.GL.shaders import compileShader, compileProgram
-from OpenGL.arrays.vbo import VBO
 
 from nozlo.parser import Parser
 
@@ -57,7 +56,7 @@ class Nozlo():
         self.aim = np.array([0, 0, 0], dtype="float32")
         self.up = np.array([0, 0, 1], dtype="float32")
 
-        self.lines_geo = None
+        self.geo = None
         self.lines_bed = None
         self.lines_cam = None
 
@@ -148,29 +147,31 @@ void main() {
         center = None
         bbox = None
 
-        z_min = self.layers[self.draw_layer_min]
-        z_max = self.layers[self.draw_layer_max]
+        self.draw_layer_min
+        self.draw_layer_max
 
-        for (start, end, width, feedrate) in self.lines_geo:
-            if not (z_min <= end[2] <= z_max):
+        for layer in self.geo:
+            if not (self.draw_layer_min <= layer.number <= self.draw_layer_max):
                 continue
 
-            line_p += [start[0], start[1], start[2]]
-            line_p += [end[0], end[1], end[2]]
+            for segment in layer.segments:
 
-            if feedrate < self.high_feedrate:
-                color = colorsys.hsv_to_rgb(
-                    0.8 * (1 - (feedrate / self.high_feedrate)),
-                    1,
-                    0.8 if width else 0.5
-                )
-            else:
-                color = (0.8, 0.8, 0.8)
+                line_p += [segment.start[0], segment.start[1], segment.start[2]]
+                line_p += [segment.end[0], segment.end[1], segment.end[2]]
 
-            line_c += color
-            line_c += color
+                if segment.feedrate < self.high_feedrate:
+                    color = colorsys.hsv_to_rgb(
+                        0.8 * (1 - (segment.feedrate / self.high_feedrate)),
+                        1,
+                        0.8 if segment.width else 0.5
+                    )
+                else:
+                    color = (0.8, 0.8, 0.8)
 
-            self.line_buffer_length += 2
+                line_c += color
+                line_c += color
+
+                self.line_buffer_length += 2
 
 
     def init_line_buffer(self):
@@ -189,11 +190,6 @@ void main() {
 
         self.add_lines_bed(line_p, line_c)
         self.add_lines_geo(line_p, line_c)
-
-        # self.line_p = np.require(line_p, np.float32, 'F')
-        # self.line_p_vbo = VBO(self.line_p)
-        # self.line_c = np.require(line_c, np.float32, 'F')
-        # self.line_c_vbo = VBO(self.line_c)
 
         GL.glBindVertexArray(self.line_array)
 
@@ -274,9 +270,21 @@ void main() {
 
         GL.glLineWidth(1.0)
 
+        # GL.glBindVertexArray(self.line_array)
+        # GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_position)
+        # GL.glVertexAttribPointer(0, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
+        # GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_color)
+        # GL.glVertexAttribPointer(1, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
+
         GL.glEnableVertexAttribArray(0)
         GL.glEnableVertexAttribArray(1)
+
         GL.glDrawArrays(GL.GL_LINES, 0, self.line_buffer_length)
+        # index = np.array([0,1,2,3,4,5,6,7], dtype=np.uint32)
+        # index = list(range(100))
+        # GL.glDrawElements(GL.GL_LINES, len(index), GL.GL_UNSIGNED_INT, index)
+        # GL.glBindVertexArray(0)
+
         GL.glDisableVertexAttribArray(0)
         GL.glDisableVertexAttribArray(1)
 
@@ -477,10 +485,13 @@ void main() {
     def load_geo(self, gcode_path):
         parser = Parser()
 
+        LOG.debug("load geo start")
+        profile_start = time.time()
+
         self.title = f"Nozlo: {gcode_path.name}"
 
         with gcode_path.open() as fp:
-            self.lines_geo = parser.parse(fp)
+            self.geo = parser.parse(fp)
 
         layers = set()
 
@@ -489,21 +500,20 @@ void main() {
         model_max = [None, None, None]
         model_count = 0
 
-        for (start, end, width, feedrate) in self.lines_geo:
-            if width and end[0] >= 0 and end[1] >= 0:
-                # Extrusion in build volume
-                for i in range(3):
-                    model_center[i] += end[i]
-                    if not model_count:
-                        model_min[i] = end[i]
-                        model_max[i] = end[i]
-                    else:
-                        model_min[i] = min(model_min[i], end[i])
-                        model_max[i] = max(model_max[i], end[i])
-                model_count += 1
-
-            layers.add(start[2])
-            layers.add(end[2])
+        for layer in self.geo:
+            layers.add(layer.number)
+            for segment in layer.segments:
+                if segment.width and segment.end[0] >= 0 and segment.end[1] >= 0:
+                    # Extrusion in build volume
+                    for i in range(3):
+                        model_center[i] += segment.end[i]
+                        if not model_count:
+                            model_min[i] = segment.end[i]
+                            model_max[i] = segment.end[i]
+                        else:
+                            model_min[i] = min(model_min[i], segment.end[i])
+                            model_max[i] = max(model_max[i], segment.end[i])
+                    model_count += 1
 
         self.model_center = [v / model_count for v in model_center]
 
@@ -517,14 +527,15 @@ void main() {
         self.draw_layer_max = (len(self.layers) -1)
 
         LOG.info(f"Loaded {len(self.layers)} layers.")
+        LOG.debug(f"load geo end {time.time() - profile_start:0.2f}")
 
 
     def load_bed(self):
         bed_width = 214
         bed_length = 214
         grid_step = 30
-        grid_x = 7
-        grid_y = 7
+        grid_x = 9
+        grid_y = 9
         cross_xy = 10
 
         self.lines_bed = [

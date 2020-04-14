@@ -13,15 +13,48 @@
 
 import re
 import logging
+from typing import Tuple, List
+from dataclasses import dataclass
 
 import numpy as np
 
 
+
 LOG = logging.getLogger("parser")
+
+
+
+@dataclass
+class Segment:
+    """
+    G-code line segment
+    """
+
+    start: Tuple[float, float, float]
+    end: Tuple[float, float, float]
+    width: float
+    feedrate: float
+    tool_temp: float
+    bed_temp: float
+    fan_speed: float
+
+
+
+class Layer:
+    """
+    G-code layer
+    """
+
+    def __init__(self, number: int = 0):
+        self.number = number
+        self.segments = []
+
+
 
 class Parser():
     """
-    G-code parser
+    G-code parser.
+    Returns a list of layers. Each layer contains a list of `Segment` objects.
     """
 
     def __init__(self):
@@ -30,36 +63,56 @@ class Parser():
         self.relative = None
         self.unit_multiplier = 1
         self.feedrate = 100
+        self.tool_temp = 0
+        self.bed_temp = 0
+        self.fan_speed = 0
 
 
     def parse_line(self, line, n=None):
+        command = None
+        comment = None
+        values = {}
 
         # Remove comments
-        line = line.split(";", 1)[0].strip()
+        if ";" in line:
+            line, comment = [v.strip() for v in line.split(";", 1)]
 
-        command = None
-        values = {}
-        for i, match in enumerate(re.compile("([A-Z])\s*([0-9.-]+)").finditer(line)):
+        re_command = re.compile(r"([A-Z])\s*([0-9.-]+)")
+
+        for i, match in enumerate(re_command.finditer(line)):
             alpha, number = match.groups()
             if i == 0:
                 command = f"{alpha}{number}"
             else:
                 values[alpha] = number
 
-        return command, values
+        return command, values, comment
 
 
     def parse(self, fp):
-        lines = []
+        layers = []
+        number = 0
+        layer = Layer(number=number)
 
+        re_layer_move_slic3r = re.compile(r"move to next layer \(([\d]+)\)")
         for n, line in enumerate(fp, 1):
             line = line.rstrip()
 
-            command, values = self.parse_line(line, n=n)
+            command, values, comment = self.parse_line(line, n=n)
+
+            if comment:
+                layer_match = re_layer_move_slic3r.search(comment)
+                if layer_match:
+                    comment_number = int(layer_match.group(1))
+                    if comment_number < number:
+                        raise Exception(f"Layer decrease from {number} to {comment_number}.")
+                    while number < comment_number:
+                        layers.append(layer)
+                        number += 1
+                        layer = Layer(number=number)
 
             if command is None:
                 continue
-
 
             if command in ("G0", "G1"):
 
@@ -92,10 +145,16 @@ class Parser():
                 distance_e = end_e - start_e
                 width = distance_e / distance_p if distance_p else 0
 
-                lines.append((start_p, end_p, width, self.feedrate))
-
-                # if self.position[2] > 2:
-                #     break
+                layer.segments.append(Segment(
+                    start=start_p,
+                    end=end_p,
+                    width=width,
+                    feedrate=self.feedrate,
+                    tool_temp=self.tool_temp,
+                    bed_temp=self.bed_temp,
+                    fan_speed=self.fan_speed,
+                ))
+                # lines.append((start_p, end_p, width, self.feedrate))
 
             elif command == "G21":
                 self.unit_multiplier = 1
@@ -109,13 +168,11 @@ class Parser():
             elif command == "G90":
                 if values:
                     raise NotImplementedError(f"G90: {values}")
-                else:
-                    self.relative = False
+                self.relative = False
             elif command == "G91":
                 if values:
                     raise NotImplementedError(f"G91: {values}")
-                else:
-                    self.relative = True
+                self.relative = True
             elif command == "G92":
                 if values == {"E": "0"}:
                     self.extrusion = 0
@@ -123,10 +180,25 @@ class Parser():
                     raise NotImplementedError(f"G92: {values}")
             elif command == "M92":
                 LOG.debug(f"Ignore set steps per unit")
+            elif command in ("M104", "M109"):
+                if "S" in values:
+                    self.tool_temp = float(values.pop("S"))
+                if values:
+                    raise NotImplementedError(f"{command}: {values}")
+            elif command in ("M140", "M190"):
+                if "S" in values:
+                    self.bed_temp = float(values.pop("S"))
+                if values:
+                    raise NotImplementedError(f"{command}: {values}")
             elif command == "M106":
-                LOG.debug(f"Ignore enable fan: {values}")
+                if "S" in values:
+                    self.fan_speed = float(values.pop("S"))
+                if values:
+                    raise NotImplementedError(f"106: {values}")
             elif command == "M107":
-                LOG.debug(f"Ignore disable fan")
+                if values:
+                    raise NotImplementedError(f"107: {values}")
+                self.fan_speed = 0
             elif command == "M117":
                 LOG.info(f"Message: {line}")
             elif command == "M201":
@@ -134,6 +206,9 @@ class Parser():
             elif command == "M204":
                 LOG.debug(f"Ignore adjust acceleration: {command} {values}")
             else:
-                print(f"{n}: Ignoring {line}")
+                LOG.debug(f"{n}: Ignoring {line}")
 
-        return lines
+        if layer.segments:
+            layers.append(layer)
+
+        return layers
