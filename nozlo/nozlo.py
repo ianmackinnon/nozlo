@@ -172,8 +172,6 @@ void main() {
                 self.line_buffer_length
             ])
 
-        # Append reversed model for rendering layers above camera?
-
         self.update_geo_draw()
 
 
@@ -252,24 +250,21 @@ void main() {
             self.modelview_matrix_uniform, 1, GL.GL_FALSE,
             GL.glGetFloatv(GL.GL_MODELVIEW_MATRIX))
 
+        # Options
+
+        GL.glEnable(GL.GL_DEPTH_TEST)
+        GL.glEnable(GL.GL_MULTISAMPLE)
+        GL.glDepthMask(True)
+
         # Background
 
         GL.glClearColor(*self.background_color, 0.0)
-        GL.glClear(GL.GL_COLOR_BUFFER_BIT)
+        GL.glClear(
+            GL.GL_COLOR_BUFFER_BIT |
+            GL.GL_DEPTH_BUFFER_BIT
+        )
 
         # Draw Layers
-
-        GL.glEnable(GL.GL_MULTISAMPLE)
-        # glEnable(GL_BLEND)
-        # glEnable(GL_DEPTH_TEST)
-        # glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-        # glEnable(GL_LINE_SMOOTH)
-        # glEnable(GL_POLYGON_SMOOTH)
-        # glEnable(GL_ALPHA_TEST)
-        # glAlphaFunc(GL_ALWAYS, 0)
-        # glShadeModel(GL_SMOOTH)
-        # glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
-        # glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE)
 
         GL.glLineWidth(1.0)
 
@@ -282,7 +277,7 @@ void main() {
         GL.glEnableVertexAttribArray(0)
         GL.glEnableVertexAttribArray(1)
 
-        GL.glDrawArrays(GL.GL_LINES, self.draw_start, self.draw_end - self.draw_start)
+        GL.glDrawArrays(GL.GL_LINES, self.draw_start, self.draw_end + 1 - self.draw_start)
 
         # index = self.draw_index
         # GL.glDrawElements(GL.GL_LINES, len(index), GL.GL_UNSIGNED_INT, index)
@@ -442,9 +437,6 @@ void main() {
         self.draw_start = self.draw_layer_chunks[self.draw_layer_min][0]
         self.draw_end = self.draw_layer_chunks[self.draw_layer_max][1]
 
-        print("start", self.draw_start)
-        print("end", self.draw_end)
-
 
     def mouse(self, button, state, x, y):
         self.button[button] = not state
@@ -590,7 +582,7 @@ void main() {
 
     def run(self):
         GLUT.glutInit()
-        GLUT.glutSetOption(GLUT.GLUT_MULTISAMPLE, 2)
+        GLUT.glutSetOption(GLUT.GLUT_MULTISAMPLE, 4)
         GLUT.glutInitDisplayMode(
             GLUT.GLUT_DOUBLE |
             GLUT.GLUT_ALPHA |
