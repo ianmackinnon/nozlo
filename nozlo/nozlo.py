@@ -65,7 +65,6 @@ class Nozlo():
         self.draw_layer_max = None
         self.draw_layer_min = None
         self.draw_single_layer = False
-        self.update_geo_time = None
 
         self.model_center = None
         self.model_size = None
@@ -144,16 +143,11 @@ void main() {
 
 
     def add_lines_geo(self, line_p, line_c):
-        center = None
-        bbox = None
 
-        self.draw_layer_min
-        self.draw_layer_max
+        self.draw_layer_chunks = []
 
         for layer in self.geo:
-            if not (self.draw_layer_min <= layer.number <= self.draw_layer_max):
-                continue
-
+            layer_chunk_start = self.line_buffer_length
             for segment in layer.segments:
 
                 line_p += [segment.start[0], segment.start[1], segment.start[2]]
@@ -172,6 +166,15 @@ void main() {
                 line_c += color
 
                 self.line_buffer_length += 2
+
+            self.draw_layer_chunks.append([
+                layer_chunk_start,
+                self.line_buffer_length
+            ])
+
+        # Append reversed model for rendering layers above camera?
+
+        self.update_geo_draw()
 
 
     def init_line_buffer(self):
@@ -279,10 +282,16 @@ void main() {
         GL.glEnableVertexAttribArray(0)
         GL.glEnableVertexAttribArray(1)
 
-        GL.glDrawArrays(GL.GL_LINES, 0, self.line_buffer_length)
+        GL.glDrawArrays(GL.GL_LINES, self.draw_start, self.draw_end - self.draw_start)
+
+        # index = self.draw_index
+        # GL.glDrawElements(GL.GL_LINES, len(index), GL.GL_UNSIGNED_INT, index)
+        # for n in range(self.draw_layer_min, self.draw_layer_max + 1):
+        #     index = self.draw_layer_indices[n]
+        #     GL.glDrawElements(GL.GL_LINES, len(index), GL.GL_UNSIGNED_INT, index)
+
         # index = np.array([0,1,2,3,4,5,6,7], dtype=np.uint32)
         # index = list(range(100))
-        # GL.glDrawElements(GL.GL_LINES, len(index), GL.GL_UNSIGNED_INT, index)
         # GL.glBindVertexArray(0)
 
         GL.glDisableVertexAttribArray(0)
@@ -310,7 +319,7 @@ void main() {
         if key == b'f':
             self.reset_camera()
         if key == b'd':
-            self.update_geo(toggle_single=True)
+            self.update_geo_draw(toggle_single=True)
 
         self.update_cursor(x, y)
         GLUT.glutPostRedisplay()
@@ -318,14 +327,14 @@ void main() {
 
     def special(self, key, x, y):
         if key == GLUT.GLUT_KEY_HOME:
-            self.update_geo(relative="first")
+            self.update_geo_draw(relative="first")
         if key == GLUT.GLUT_KEY_END:
-            self.update_geo(relative="last")
+            self.update_geo_draw(relative="last")
 
         if key == GLUT.GLUT_KEY_DOWN:
-            self.update_geo(layer=-1)
+            self.update_geo_draw(layer=-1)
         if key == GLUT.GLUT_KEY_UP:
-            self.update_geo(layer=1)
+            self.update_geo_draw(layer=1)
 
         self.update_cursor(x, y)
         GLUT.glutPostRedisplay()
@@ -400,10 +409,11 @@ void main() {
         self.camera[2] = camera2[2]
 
 
-    def update_geo(self, layer=0, relative=None, toggle_single=None):
+    def update_geo_draw(self, layer=0, relative=None, toggle_single=None):
         last = len(self.layers) - 1
         target_min = self.draw_layer_min
         target_max = self.draw_layer_max
+        self.draw_index = []
 
         if relative == "first":
             target_max = 0
@@ -427,10 +437,13 @@ void main() {
         ):
             self.draw_layer_max = target_max
             self.draw_layer_min = target_min
-            LOG.info(f"Drawing {self.draw_layer_max + 1}/{len(self.layers)} layers.")
-            self.update_geo_time = time.time()
 
 
+        self.draw_start = self.draw_layer_chunks[self.draw_layer_min][0]
+        self.draw_end = self.draw_layer_chunks[self.draw_layer_max][1]
+
+        print("start", self.draw_start)
+        print("end", self.draw_end)
 
 
     def mouse(self, button, state, x, y):
@@ -575,15 +588,6 @@ void main() {
                     ],
                 ]
 
-    def tick(self):
-        if self.update_geo_time:
-            now = time.time()
-            elapsed = now - self.update_geo_time
-            if elapsed > 0.1:
-                self.update_geo_time = None
-                self.load_line_buffer()
-
-
     def run(self):
         GLUT.glutInit()
         GLUT.glutSetOption(GLUT.GLUT_MULTISAMPLE, 2)
@@ -612,7 +616,5 @@ void main() {
         GLUT.glutMouseFunc(self.mouse)
         GLUT.glutMotionFunc(self.motion)
         GLUT.glutPassiveMotionFunc(self.motion)
-
-        GLUT.glutIdleFunc(self.tick)
 
         GLUT.glutMainLoop()
