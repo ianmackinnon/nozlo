@@ -56,9 +56,8 @@ class Nozlo():
         self.aim = np.array([0, 0, 0], dtype="float32")
         self.up = np.array([0, 0, 1], dtype="float32")
 
-        self.geo = None
+        self.model = None
         self.lines_bed = None
-        self.lines_cam = None
 
         self.layers = None
 
@@ -68,11 +67,16 @@ class Nozlo():
 
         self.model_center = None
         self.model_size = None
+        self.bed_center = None
+        self.bed_size = None
 
         self.line_buffer_length = None
         self.line_buffer_position = None
         self.line_buffer_color = None
         self.line_array = None
+
+        self.bed_array_chunk = []
+        self.model_layer_chunks = []
 
         self.load_bed()
 
@@ -134,6 +138,8 @@ void main() {
 
 
     def add_lines_bed(self, line_p, line_c):
+        chunk_start = self.line_buffer_length
+
         for (start, end) in self.lines_bed:
             line_p += [start[0], start[1], start[2]]
             line_p += [end[0], end[1], end[2]]
@@ -141,12 +147,13 @@ void main() {
             line_c += self.bed_color
             self.line_buffer_length += 2
 
+        self.bed_array_chunk = [chunk_start, self.line_buffer_length]
 
-    def add_lines_geo(self, line_p, line_c):
 
-        self.draw_layer_chunks = []
+    def add_lines_model(self, line_p, line_c):
+        self.model_layer_chunks = []
 
-        for layer in self.geo:
+        for layer in self.model:
             layer_chunk_start = self.line_buffer_length
             for segment in layer.segments:
 
@@ -167,12 +174,12 @@ void main() {
 
                 self.line_buffer_length += 2
 
-            self.draw_layer_chunks.append([
+            self.model_layer_chunks.append([
                 layer_chunk_start,
                 self.line_buffer_length
             ])
 
-        self.update_geo_draw()
+        self.update_model_draw()
 
 
     def init_line_buffer(self):
@@ -190,7 +197,7 @@ void main() {
         self.line_buffer_length = 0
 
         self.add_lines_bed(line_p, line_c)
-        self.add_lines_geo(line_p, line_c)
+        self.add_lines_model(line_p, line_c)
 
         GL.glBindVertexArray(self.line_array)
 
@@ -277,7 +284,15 @@ void main() {
         GL.glEnableVertexAttribArray(0)
         GL.glEnableVertexAttribArray(1)
 
-        GL.glDrawArrays(GL.GL_LINES, self.draw_start, self.draw_end + 1 - self.draw_start)
+        # Draw bed
+        start = self.bed_array_chunk[0]
+        end = self.bed_array_chunk[1]
+        GL.glDrawArrays(GL.GL_LINES, start, end - start)
+
+        # Draw model layers
+        start = self.model_layer_chunks[self.draw_layer_min][0]
+        end = self.model_layer_chunks[self.draw_layer_max][1]
+        GL.glDrawArrays(GL.GL_LINES, start, end - start)
 
         # index = self.draw_index
         # GL.glDrawElements(GL.GL_LINES, len(index), GL.GL_UNSIGNED_INT, index)
@@ -311,10 +326,12 @@ void main() {
         if ord(key) == 27 or key == b'q':
             GLUT.glutLeaveMainLoop()
 
+        if key == b'a':
+            self.frame_bed()
         if key == b'f':
-            self.reset_camera()
+            self.frame_model()
         if key == b'd':
-            self.update_geo_draw(toggle_single=True)
+            self.update_model_draw(toggle_single=True)
 
         self.update_cursor(x, y)
         GLUT.glutPostRedisplay()
@@ -322,29 +339,37 @@ void main() {
 
     def special(self, key, x, y):
         if key == GLUT.GLUT_KEY_HOME:
-            self.update_geo_draw(relative="first")
+            self.update_model_draw(relative="first")
         if key == GLUT.GLUT_KEY_END:
-            self.update_geo_draw(relative="last")
+            self.update_model_draw(relative="last")
 
         if key == GLUT.GLUT_KEY_DOWN:
-            self.update_geo_draw(layer=-1)
+            self.update_model_draw(layer=-1)
         if key == GLUT.GLUT_KEY_UP:
-            self.update_geo_draw(layer=1)
+            self.update_model_draw(layer=1)
 
         self.update_cursor(x, y)
         GLUT.glutPostRedisplay()
 
 
-    def reset_camera(self):
+    def frame_model(self):
         cam_v = (self.camera - self.aim)
         cam_dist = np.linalg.norm(cam_v)
         cam_v /= cam_dist
 
-        self.aim[0] = self.model_center[0]
-        self.aim[1] = self.model_center[1]
-        self.aim[2] = self.model_center[2]
-
+        self.aim = self.model_center.copy()
         cam_v2 = cam_v * self.model_size
+
+        self.camera = self.aim + cam_v2
+
+
+    def frame_bed(self):
+        cam_v = (self.camera - self.aim)
+        cam_dist = np.linalg.norm(cam_v)
+        cam_v /= cam_dist
+
+        self.aim = self.bed_center.copy()
+        cam_v2 = cam_v * self.bed_size
 
         self.camera = self.aim + cam_v2
 
@@ -404,7 +429,7 @@ void main() {
         self.camera[2] = camera2[2]
 
 
-    def update_geo_draw(self, layer=0, relative=None, toggle_single=None):
+    def update_model_draw(self, layer=0, relative=None, toggle_single=None):
         last = len(self.layers) - 1
         target_min = self.draw_layer_min
         target_max = self.draw_layer_max
@@ -434,8 +459,6 @@ void main() {
             self.draw_layer_min = target_min
 
 
-        self.draw_start = self.draw_layer_chunks[self.draw_layer_min][0]
-        self.draw_end = self.draw_layer_chunks[self.draw_layer_max][1]
 
 
     def mouse(self, button, state, x, y):
@@ -487,52 +510,70 @@ void main() {
         GLUT.glutPostRedisplay()
 
 
-    def load_geo(self, gcode_path):
+    @staticmethod
+    def bbox_init():
+        return {
+            "center": np.array([0, 0, 0], dtype="float32"),
+            "min": np.array([0, 0, 0], dtype="float32"),
+            "max": np.array([0, 0, 0], dtype="float32"),
+            "_count": 0,
+        }
+
+
+    @staticmethod
+    def bbox_update(bbox, point):
+        for i in range(3):
+            bbox["center"][i] += point[i]
+            if not bbox["_count"]:
+                bbox["min"][i] = point[i]
+                bbox["max"][i] = point[i]
+            else:
+                bbox["min"][i] = min(bbox["min"][i], point[i])
+                bbox["max"][i] = max(bbox["max"][i], point[i])
+        bbox["_count"] += 1
+
+
+    @staticmethod
+    def bbox_calc(bbox):
+        if bbox["_count"]:
+            bbox["center"] /= bbox["_count"]
+        del bbox["_count"]
+
+
+
+    def load_model(self, gcode_path):
         parser = Parser()
 
-        LOG.debug("load geo start")
+        LOG.debug("load model start")
         profile_start = time.time()
 
         self.title = f"Nozlo: {gcode_path.name}"
 
         with gcode_path.open() as fp:
-            self.geo = parser.parse(fp)
+            self.model = parser.parse(fp)
 
         layers = set()
 
-        model_center = [0, 0, 0]
-        model_min = [None, None, None]
-        model_max = [None, None, None]
-        model_count = 0
+        bbox = self.bbox_init()
 
-        for layer in self.geo:
+        for layer in self.model:
             layers.add(layer.number)
             for segment in layer.segments:
                 if segment.width and segment.end[0] >= 0 and segment.end[1] >= 0:
+                    self.bbox_update(bbox, segment.end)
                     # Extrusion in build volume
-                    for i in range(3):
-                        model_center[i] += segment.end[i]
-                        if not model_count:
-                            model_min[i] = segment.end[i]
-                            model_max[i] = segment.end[i]
-                        else:
-                            model_min[i] = min(model_min[i], segment.end[i])
-                            model_max[i] = max(model_max[i], segment.end[i])
-                    model_count += 1
 
-        self.model_center = [v / model_count for v in model_center]
+        self.bbox_calc(bbox)
 
-        self.model_size = np.linalg.norm(
-            np.array(model_max, dtype="float32") -
-            np.array(model_min, dtype="float32")
-        )
+        self.model_center = bbox["center"]
+        self.model_size = np.linalg.norm(bbox["max"] - bbox["min"])
 
         self.layers = sorted(list(layers))
         self.draw_layer_min = 0
         self.draw_layer_max = (len(self.layers) -1)
 
         LOG.info(f"Loaded {len(self.layers)} layers.")
-        LOG.debug(f"load geo end {time.time() - profile_start:0.2f}")
+        LOG.debug(f"load model end {time.time() - profile_start:0.2f}")
 
 
     def load_bed(self):
@@ -580,6 +621,16 @@ void main() {
                     ],
                 ]
 
+        bbox = self.bbox_init()
+        for (start, end) in self.lines_bed:
+            self.bbox_update(bbox, start)
+            self.bbox_update(bbox, end)
+
+        self.bbox_calc(bbox)
+        self.bed_center = bbox["center"]
+        self.bed_size = np.linalg.norm(bbox["max"] - bbox["min"])
+
+
     def run(self):
         GLUT.glutInit()
         GLUT.glutSetOption(GLUT.GLUT_MULTISAMPLE, 4)
@@ -596,7 +647,7 @@ void main() {
 
         self.window = GLUT.glutCreateWindow(self.title)
 
-        self.reset_camera()
+        self.frame_model()
         self.init_program()
         self.init_line_buffer()
         self.load_line_buffer()
