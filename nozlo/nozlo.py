@@ -104,8 +104,8 @@ class Nozlo():
         vert = """\
 #version 330 core
 
-uniform mat4 uMVMatrix;
-uniform mat4 uPMatrix;
+uniform mat4 modelview_matrix;
+uniform mat4 projection_matrix;
 
 layout(location = 0) in vec3 vertex_position;
 layout(location = 1) in vec3 vertex_color;
@@ -114,7 +114,7 @@ out vec3 color;
 
 void main() {
   color = vertex_color;
-  gl_Position = uPMatrix * uMVMatrix * vec4(vertex_position, 1.0);
+  gl_Position = projection_matrix * modelview_matrix * vec4(vertex_position, 1.0);
 }"""
 
         frag = """\
@@ -133,8 +133,10 @@ void main() {
             compileShader(frag, GL.GL_FRAGMENT_SHADER)
         )
 
-        self.projection_matrix_uniform = GL.glGetUniformLocation(self.program, 'uPMatrix')
-        self.modelview_matrix_uniform = GL.glGetUniformLocation(self.program, "uMVMatrix")
+        self.projection_matrix_uniform = GL.glGetUniformLocation(
+            self.program, 'projection_matrix')
+        self.modelview_matrix_uniform = GL.glGetUniformLocation(
+            self.program, "modelview_matrix")
 
 
     def add_lines_bed(self, line_p, line_c):
