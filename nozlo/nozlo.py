@@ -78,6 +78,8 @@ class Nozlo():
         self.bed_array_chunk = []
         self.model_layer_chunks = []
 
+        self.max_feedrate = 0
+
         self.load_bed()
 
 
@@ -152,8 +154,22 @@ void main() {
         self.bed_array_chunk = [chunk_start, self.line_buffer_length]
 
 
+    @staticmethod
+    def hue(value, max_value):
+        t = value / max_value if max_value else 0
+        return 0.8 * (1 - t)
+
+
     def add_lines_model(self, line_p, line_c):
         self.model_layer_chunks = []
+
+        self.max_feedrate = 0
+        for layer in self.model:
+            for segment in layer.segments:
+                self.max_feedrate = max(self.max_feedrate, segment.feedrate)
+
+        increment = 50 * 60
+        self.max_feedrate = math.ceil(self.max_feedrate / increment) * increment
 
         for layer in self.model:
             layer_chunk_start = self.line_buffer_length
@@ -162,14 +178,11 @@ void main() {
                 line_p += [segment.start[0], segment.start[1], segment.start[2]]
                 line_p += [segment.end[0], segment.end[1], segment.end[2]]
 
-                if segment.feedrate < self.high_feedrate:
-                    color = colorsys.hsv_to_rgb(
-                        0.8 * (1 - (segment.feedrate / self.high_feedrate)),
-                        1,
-                        0.8 if segment.width else 0.5
-                    )
-                else:
-                    color = (0.8, 0.8, 0.8)
+                color = colorsys.hsv_to_rgb(
+                    self.hue(segment.feedrate, self.max_feedrate),
+                    1,
+                    0.8 if segment.width else 0.5
+                )
 
                 line_c += color
                 line_c += color
@@ -225,9 +238,7 @@ void main() {
         GLUT.glutPostRedisplay()
 
 
-    def display(self):
-        LOG.debug("display start")
-        start = time.time()
+    def render_3d_lines(self):
 
         # Projection
 
@@ -311,7 +322,83 @@ void main() {
 
         GL.glUseProgram(0)
 
-        # Update
+
+    @staticmethod
+    def text(x, y, text):
+        GL.glRasterPos2f(x, y)
+        for ch in text:
+            GLUT.glutBitmapCharacter(GLUT.GLUT_BITMAP_9_BY_15, ord(ch))
+
+
+    def render_2d_hud(self):
+        # Projection
+
+        GL.glMatrixMode(GL.GL_PROJECTION)
+        GL.glLoadIdentity()
+        GLU.gluOrtho2D(0, self.width, 0, self.height)
+
+        # Camera
+
+        GL.glMatrixMode(GL.GL_MODELVIEW)
+        GL.glLoadIdentity()
+
+        GL.glDisable(GL.GL_DEPTH_TEST)
+
+        margin = 16
+
+        GL.glEnable(GL.GL_BLEND)
+
+        cx = 9
+        cy = 15
+        ly = int(cy * 1.25)
+
+        x = self.width - margin - cx * 9.5
+        y = self.height - margin - ly * 0.5
+        x1 = self.width - margin - cx * 9.5
+        x2 = self.width - margin - cx * 6.5
+
+        GL.glLineWidth(1.0)
+
+        GL.glColor4f(0.8, 0.8, 0.8, 1)
+        self.text(x, y, "Feedrate ")
+
+        step = 6
+        max_value = self.max_feedrate / 60
+        for i in range(step):
+            t = i / (step - 1)
+            value = max_value * (1 - t)
+            hue = self.hue(value, max_value)
+            y -= ly
+
+            GL.glColor3fv(colorsys.hsv_to_rgb(hue, 1, 0.8))
+            GL.glBegin(GL.GL_LINES)
+            GL.glVertex2f(x1, y + cy * 0.3)
+            GL.glVertex2f(x2, y + cy * 0.3)
+            GL.glEnd()
+
+            GL.glColor3fv(colorsys.hsv_to_rgb(hue, 0.4, 0.8))
+            self.text(x, y, f"{value:9.1f}")
+
+        x = margin + cx * 0.5
+        y = self.height - margin - ly * 0.5
+
+        GL.glColor4f(0.8, 0.8, 0.8, 1)
+        self.text(x, y, f"Layer:{self.draw_layer_max:3d}")
+        y -= ly
+        layer = self.model[self.draw_layer_max]
+        if layer.segments:
+            z = layer.segments[0].end[2]
+            self.text(x, y, f"Z:{z:7.2f}")
+        else:
+            self.text(x, y, f"Z:   none")
+
+
+    def display(self):
+        LOG.debug("display start")
+        start = time.time()
+
+        self.render_3d_lines()
+        self.render_2d_hud()
 
         GLUT.glutSwapBuffers()
 
@@ -507,6 +594,8 @@ void main() {
 
 
     def reshape(self, w, h):
+        self.width = w
+        self.height = h
         self.aspect = w / h if h else 1
         GL.glViewport(0, 0, w, h)
         GLUT.glutPostRedisplay()
@@ -637,15 +726,17 @@ void main() {
         GLUT.glutInit()
         GLUT.glutSetOption(GLUT.GLUT_MULTISAMPLE, 4)
         GLUT.glutInitDisplayMode(
-            GLUT.GLUT_DOUBLE |
-            GLUT.GLUT_ALPHA |
-            GLUT.GLUT_DEPTH |
-            GLUT.GLUT_STENCIL |
-            GLUT.GLUT_MULTISAMPLE
+            GLUT.GLUT_DOUBLE # |
+            # GLUT.GLUT_ALPHA |
+            # GLUT.GLUT_DEPTH |
+            # GLUT.GLUT_STENCIL |
+            # GLUT.GLUT_MULTISAMPLE
         )
-        GLUT.glutInitWindowSize(1200, 720)
+        self.width = 1200
+        self.height = 720
 
-        GLUT.glutInitWindowPosition(1200, 720)
+        GLUT.glutInitWindowSize(self.width, self.height)
+        GLUT.glutInitWindowPosition(100, 100)
 
         self.window = GLUT.glutCreateWindow(self.title)
 
