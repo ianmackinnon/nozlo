@@ -407,6 +407,13 @@ void main() {
         LOG.debug(f"display end {duration:0.2f}")
 
 
+    def _display(self):
+        try:
+            self.display()
+        except KeyboardInterrupt:
+            GLUT.glutLeaveMainLoop()
+
+
     def update_cursor(self, x, y):
         self.cursor[0] = x
         self.cursor[1] = y
@@ -730,6 +737,10 @@ void main() {
         self.bed_size = np.linalg.norm(bbox["max"] - bbox["min"])
 
 
+    def idle(self):
+        GLUT.glutPostRedisplay()
+
+
     def run(self):
         GLUT.glutInit()
         GLUT.glutSetOption(GLUT.GLUT_MULTISAMPLE, 4)
@@ -750,7 +761,8 @@ void main() {
         self.init_line_buffer()
         self.load_line_buffer()
 
-        GLUT.glutDisplayFunc(self.display)
+        GLUT.glutDisplayFunc(self._display)
+        GLUT.glutIdleFunc(self.idle)
         GLUT.glutReshapeFunc(self.reshape)
         GLUT.glutKeyboardFunc(self.keyboard)
         GLUT.glutSpecialFunc(self.special)
