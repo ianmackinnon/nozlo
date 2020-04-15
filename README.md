@@ -32,3 +32,22 @@ optional arguments:
 
 ```
 
+
+## Controls
+
+Mouse:
+
+-   **Left drag**: Tumble camera
+-   **Right drag**: Dolly camera
+-   **Scroll**: Zoom camera
+
+Keyboard
+
+-   **Home**: toggle between first model layer and first movement layer
+-   **End**: toggle between last model layer and first movement layer
+-   **Up**: go up a layer
+-   **Down**: go down a layer
+-   **F**: frame model in camera
+-   **A**: frame build surface in camera
+-   **S**: toggle showing single layer
+

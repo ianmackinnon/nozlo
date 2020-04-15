@@ -404,7 +404,7 @@ void main() {
             self.frame_bed()
         if key == b'f':
             self.frame_model()
-        if key == b'd':
+        if key == b's':
             self.update_model_draw(toggle_single=True)
 
         self.update_cursor(x, y)
