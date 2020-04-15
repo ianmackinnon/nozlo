@@ -36,7 +36,7 @@ setuptools.setup(
         "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
         "Operating System :: OS Independent",
     ],
-    install_requires=["pyopengl"],
+    install_requires=["pyopengl", "numpy"],
     python_requires='>=3',
     scripts=[
         "scripts/nozlo",
