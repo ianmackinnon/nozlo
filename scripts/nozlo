@@ -53,6 +53,29 @@ def main():
         help="Show only the single current layer.")
 
     parser.add_argument(
+        "--ortho", "-o",
+        action="store_true",
+        help="Use orthographic projection.")
+
+    parser.add_argument(
+        "--aim", "-a",
+        type=float,
+        nargs=3,
+        help="Aim coordinates for the camera.")
+    parser.add_argument(
+        "--yaw", "-Y",
+        type=float,
+        help="Camera yaw in degrees, starting in positive X and moving clockwise (looking down) around the aim point.")
+    parser.add_argument(
+        "--pitch", "-P",
+        type=float,
+        help="Camera pitch in degrees, positive puts the camera above the aim point.")
+    parser.add_argument(
+        "--dist", "-D",
+        type=float,
+        help="Camera distance in mm for perspective view. Camera frame in mm for orthographic view")
+
+    parser.add_argument(
         "gcode",
         metavar="GCODE",
         type=Path,
@@ -71,10 +94,29 @@ def main():
 
     app = Nozlo()
     app.load_model(args.gcode)
+
     if args.layer:
         app.update_model_draw(layer=args.layer)
     if args.single:
         app.update_model_draw(single=args.single)
+
+    if args.aim is not None:
+        app.move_aim(args.aim)
+
+    if args.ortho:
+        app.ortho = True
+
+    if args.dist is not None:
+        app.distance = args.dist
+        app.move_camera()
+
+    if args.yaw is not None:
+        app.yaw = 0
+        app.move_camera(yaw=args.yaw)
+    if args.pitch is not None:
+        app.pitch = 0
+        app.move_camera(pitch=args.pitch)
+
     app.run()
 
 

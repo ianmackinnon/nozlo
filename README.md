@@ -18,6 +18,8 @@ python3 -m pip install -e git+https://github.com/ianmackinnon/nozlo#egg=nozlo
 
 ```
 usage: nozlo [-h] [--verbose] [--quiet] [--version] [--layer LAYER] [--single]
+             [--ortho] [--aim AIM AIM AIM] [--yaw YAW] [--pitch PITCH]
+             [--dist DIST]
              GCODE
 
 G-code viewer.
@@ -33,6 +35,16 @@ optional arguments:
   --layer LAYER, -l LAYER
                         Layer number to display.
   --single, -s          Show only the single current layer.
+  --ortho, -o           Use orthographic projection.
+  --aim AIM AIM AIM, -a AIM AIM AIM
+                        Aim coordinates for the camera.
+  --yaw YAW, -Y YAW     Camera yaw in degrees, starting in positive X and
+                        moving clockwise (looking down) around the aim point.
+  --pitch PITCH, -P PITCH
+                        Camera pitch in degrees, positive puts the camera
+                        above the aim point.
+  --dist DIST, -D DIST  Camera distance in mm for perspective view. Camera
+                        frame in mm for orthographic view
 ```
 
 
@@ -53,4 +65,7 @@ Keyboard
 -   **F**: frame model in camera
 -   **A**: frame build surface in camera
 -   **S**: toggle showing single layer
+-   **O**: toggle orthographic/perspective projection
+
+-   **Q**/**Escape**: Quit
 

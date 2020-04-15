@@ -36,6 +36,8 @@ class Nozlo():
     background_color = (0.18, 0.18, 0.18)
     high_feedrate = 100 * 60
 
+    up_vector = np.array([0, 0, 1], dtype="float32")
+
     def __init__(self):
         self.title = None
         self.window = None
@@ -48,13 +50,20 @@ class Nozlo():
         self.button = {v: None for v in range(5)}
 
         self.aspect = None
+
+        self.aim = np.array([0, 0, 0], dtype="float32")
+        self.yaw = 45;
+        self.pitch = 30;
+
+        self.distance = 45;
+
         self.view_angle = 50
         self.near_plane = 0.1
         self.far_plane = 1000
 
-        self.camera = np.array([100, -100, 100], dtype="float32")
-        self.aim = np.array([0, 0, 0], dtype="float32")
-        self.up = np.array([0, 0, 1], dtype="float32")
+        self.ortho = False
+
+        self.camera = np.array([0, 0, 0], dtype="float32")
 
         self.model = None
         self.lines_bed = None
@@ -244,16 +253,23 @@ void main() {
 
         # Projection
 
-        GL.glMatrixMode(GL.GL_PROJECTION)
-        GL.glLoadIdentity()
-        GLU.gluPerspective(self.view_angle, self.aspect, self.near_plane, self.far_plane)
+        if self.ortho:
+            GL.glMatrixMode(GL.GL_PROJECTION)
+            GL.glLoadIdentity()
+            h = self.distance / 2
+            w = h * self.aspect
+            GL.glOrtho(-w, w, -h, h, self.near_plane, self.far_plane)
+        else:
+            GL.glMatrixMode(GL.GL_PROJECTION)
+            GL.glLoadIdentity()
+            GLU.gluPerspective(self.view_angle, self.aspect, self.near_plane, self.far_plane)
 
         # Camera
 
         GL.glMatrixMode(GL.GL_MODELVIEW)
         GL.glLoadIdentity()
-        up2 = self.up
-        if not self.angle(self.up, self.camera - self.aim):
+        up2 = self.up_vector
+        if not self.angle(self.up_vector, self.camera - self.aim):
             up2 = np.array([0, 1, 0])
         GLU.gluLookAt(
             self.camera[0], self.camera[1], self.camera[2],
@@ -406,6 +422,8 @@ void main() {
             self.frame_model()
         if key == b's':
             self.update_model_draw(single=not self.draw_single_layer)
+        if key == b'o':
+            self.ortho = not self.ortho
 
         self.update_cursor(x, y)
         GLUT.glutPostRedisplay()
@@ -432,81 +450,71 @@ void main() {
         GLUT.glutPostRedisplay()
 
 
+    def update_camera_position(self):
+        yaw = math.radians(self.yaw)
+        pitch = math.radians(self.pitch)
+
+        camera = np.array([1, 0, 0], dtype="float32")
+        camera = camera.dot(np.array([
+            [math.cos(pitch), 0, math.sin(pitch)],
+            [0, 1, 0],
+            [-math.sin(pitch), 0, math.cos(pitch)],
+        ]))
+        camera = camera.dot(np.array([
+            [math.cos(yaw), -math.sin(yaw), 0],
+            [math.sin(yaw), math.cos(yaw), 0],
+            [0, 0, 1],
+        ]))
+
+        self.camera = self.aim + camera * self.distance
+
+
     def frame_model(self):
-        cam_v = (self.camera - self.aim)
-        cam_dist = np.linalg.norm(cam_v)
-        cam_v /= cam_dist
-
         self.aim = self.model_center.copy()
-        cam_v2 = cam_v * self.model_size
+        self.distance = self.model_size
 
-        self.camera = self.aim + cam_v2
+        self.update_camera_position()
 
 
     def frame_bed(self):
-        cam_v = (self.camera - self.aim)
-        cam_dist = np.linalg.norm(cam_v)
-        cam_v /= cam_dist
-
         self.aim = self.bed_center.copy()
-        cam_v2 = cam_v * self.bed_size
+        self.distance = self.bed_size
 
-        self.camera = self.aim + cam_v2
+        self.update_camera_position()
 
 
-    def update_camera(
+    def move_aim(self, aim):
+        self.aim = np.array(aim, dtype="float32")
+        self.update_camera_position()
+
+
+    def move_camera(
             self,
-            tumble_horiz=0,
-            tumble_vert=0,
+            yaw=0,
+            pitch=0,
             dolly_horiz=0,
             dolly_vert=0,
             scroll=0
     ):
-        cam_v = (self.camera - self.aim)
-        cam_dist = np.linalg.norm(cam_v)
-        cam_v /= cam_dist
-
-        cam_xy = cam_v * np.array([1, 1, 0])
-        cam_z = cam_v[2]
-        cam_dist_xy = np.linalg.norm(cam_xy)
-        cam_angle_horiz = math.atan2(cam_xy[1], cam_xy[0])
-        cam_angle_vert = math.atan2(cam_z, cam_dist_xy)
+        camera = self.camera - self.aim
+        horiz = self.unit(np.cross(self.up_vector, camera))
+        vert = self.unit(np.cross(camera, horiz))
+        dolly = horiz * dolly_horiz + vert * dolly_vert
+        self.aim += dolly * self.distance * 0.002
 
         if scroll < 0:
-            cam_dist *= 0.9
+            self.distance *= 0.9
         if scroll > 0:
-            cam_dist *= 1.1
+            self.distance /= 0.9
 
-        cam_angle_horiz += tumble_horiz
-        cam_angle_vert += tumble_vert
-        limit = math.pi / 2 * 0.999
-        cam_angle_vert = np.clip(cam_angle_vert, -limit, limit)
+        if yaw:
+            self.yaw += yaw
+        if pitch:
+            self.pitch += pitch
+            limit = 90 * 0.999
+            self.pitch = np.clip(self.pitch, -limit, limit)
 
-        cam_v2 = np.array([1, 0, 0], dtype="float32")
-        cam_v2 = cam_v2.dot(np.array([
-            [math.cos(cam_angle_vert), 0, math.sin(cam_angle_vert)],
-            [0, 1, 0],
-            [-math.sin(cam_angle_vert), 0, math.cos(cam_angle_vert)],
-        ]))
-        cam_v2 = cam_v2.dot(np.array([
-            [math.cos(cam_angle_horiz), math.sin(cam_angle_horiz), 0],
-            [-math.sin(cam_angle_horiz), math.cos(cam_angle_horiz), 0],
-            [0, 0, 1],
-        ]))
-        cam_v2 *= cam_dist
-
-        horiz = self.unit(np.cross(self.up, cam_v))
-        vert = self.unit(np.cross(cam_v, horiz))
-
-        dolly = horiz * dolly_horiz + vert * dolly_vert
-
-        self.aim += dolly * cam_dist * 0.002
-
-        camera2 = cam_v2 + self.aim
-
-        self.camera[0] = camera2[0]
-        self.camera[1] = camera2[1]
-        self.camera[2] = camera2[2]
+        self.update_camera_position()
 
 
     def update_model_draw(self, layer=None, single=None):
@@ -544,9 +552,9 @@ void main() {
         self.button[button] = not state
 
         if button == 3 and state == 0:
-            self.update_camera(scroll=-1)
+            self.move_camera(scroll=-1)
         if button == 4 and state == 0:
-            self.update_camera(scroll=1)
+            self.move_camera(scroll=1)
 
         GLUT.glutPostRedisplay()
 
@@ -559,22 +567,22 @@ void main() {
         position = np.array([x, y], dtype="int")
         move = position - self.cursor
 
-        tumble_horiz = 0
-        tumble_vert = 0
+        yaw = 0
+        pitch = 0
         dolly_horiz = 0
         dolly_vert = 0
 
         if self.button[0]:
-            tumble_horiz = -float(move[0]) * 0.01
-            tumble_vert = float(move[1]) * 0.01
+            yaw = float(move[0]) * 0.5
+            pitch = float(move[1]) * 0.5
 
         if self.button[2]:
             dolly_horiz = -float(move[0])
             dolly_vert = float(move[1])
 
-        self.update_camera(
-            tumble_horiz=tumble_horiz,
-            tumble_vert=tumble_vert,
+        self.move_camera(
+            yaw=yaw,
+            pitch=pitch,
             dolly_horiz=dolly_horiz,
             dolly_vert=dolly_vert,
         )
@@ -661,10 +669,10 @@ void main() {
                 if self.model_layer_min == None:
                     self.model_layer_min = n
 
-
-
         LOG.info(f"Loaded {len(self.layers)} layers.")
         LOG.debug(f"load model end {time.time() - profile_start:0.2f}")
+
+        self.frame_model()
 
 
     def load_bed(self):
@@ -738,7 +746,6 @@ void main() {
 
         self.window = GLUT.glutCreateWindow(self.title)
 
-        self.frame_model()
         self.init_program()
         self.init_line_buffer()
         self.load_line_buffer()
