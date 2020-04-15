@@ -69,6 +69,8 @@ class Nozlo():
         self.model_size = None
         self.bed_center = None
         self.bed_size = None
+        self.model_layer_min = None
+        self.model_layer_max = None
 
         self.line_buffer_length = None
         self.line_buffer_position = None
@@ -288,12 +290,6 @@ void main() {
 
         GL.glLineWidth(1.0)
 
-        # GL.glBindVertexArray(self.line_array)
-        # GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_position)
-        # GL.glVertexAttribPointer(0, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
-        # GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_color)
-        # GL.glVertexAttribPointer(1, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
-
         GL.glEnableVertexAttribArray(0)
         GL.glEnableVertexAttribArray(1)
 
@@ -306,16 +302,6 @@ void main() {
         start = self.model_layer_chunks[self.draw_layer_min][0]
         end = self.model_layer_chunks[self.draw_layer_max][1]
         GL.glDrawArrays(GL.GL_LINES, start, end - start)
-
-        # index = self.draw_index
-        # GL.glDrawElements(GL.GL_LINES, len(index), GL.GL_UNSIGNED_INT, index)
-        # for n in range(self.draw_layer_min, self.draw_layer_max + 1):
-        #     index = self.draw_layer_indices[n]
-        #     GL.glDrawElements(GL.GL_LINES, len(index), GL.GL_UNSIGNED_INT, index)
-
-        # index = np.array([0,1,2,3,4,5,6,7], dtype=np.uint32)
-        # index = list(range(100))
-        # GL.glBindVertexArray(0)
 
         GL.glDisableVertexAttribArray(0)
         GL.glDisableVertexAttribArray(1)
@@ -387,8 +373,7 @@ void main() {
         y -= ly
         layer = self.model[self.draw_layer_max]
         if layer.segments:
-            z = layer.segments[0].end[2]
-            self.text(x, y, f"Z:{z:7.2f}")
+            self.text(x, y, f"Z:{layer.z:7.2f}")
         else:
             self.text(x, y, f"Z:   none")
 
@@ -428,14 +413,20 @@ void main() {
 
     def special(self, key, x, y):
         if key == GLUT.GLUT_KEY_HOME:
-            self.update_model_draw(relative="first")
+            if self.draw_layer_max == self.model_layer_min:
+                self.update_model_draw(layer=0)
+            else:
+                self.update_model_draw(layer=self.model_layer_min)
         if key == GLUT.GLUT_KEY_END:
-            self.update_model_draw(relative="last")
+            if self.draw_layer_max == self.model_layer_max:
+                self.update_model_draw(layer=-1)
+            else:
+                self.update_model_draw(layer=self.model_layer_max)
 
         if key == GLUT.GLUT_KEY_DOWN:
-            self.update_model_draw(layer=-1)
+            self.update_model_draw(layer=self.draw_layer_max - 1)
         if key == GLUT.GLUT_KEY_UP:
-            self.update_model_draw(layer=1)
+            self.update_model_draw(layer=self.draw_layer_max + 1)
 
         self.update_cursor(x, y)
         GLUT.glutPostRedisplay()
@@ -518,19 +509,20 @@ void main() {
         self.camera[2] = camera2[2]
 
 
-    def update_model_draw(self, layer=0, relative=None, toggle_single=None):
+    def update_model_draw(self, layer=None, toggle_single=None):
+        """
+        `layer`: absolute layer number or `-1` for last layer.
+        """
+
         last = len(self.layers) - 1
         target_min = self.draw_layer_min
         target_max = self.draw_layer_max
-        self.draw_index = []
 
-        if relative == "first":
-            target_max = 0
-        if relative == "last":
-            target_max = last
-
-        target_max += layer
-        target_max = max(0, min(last, target_max))
+        if layer is not None:
+            if layer == -1:
+                target_max = last
+            else:
+                target_max = max(0, min(last, layer))
 
         if toggle_single:
             self.draw_single_layer = not self.draw_single_layer
@@ -546,8 +538,6 @@ void main() {
         ):
             self.draw_layer_max = target_max
             self.draw_layer_min = target_min
-
-
 
 
     def mouse(self, button, state, x, y):
@@ -651,8 +641,8 @@ void main() {
             layers.add(layer.number)
             for segment in layer.segments:
                 if segment.width and segment.end[0] >= 0 and segment.end[1] >= 0:
-                    self.bbox_update(bbox, segment.end)
                     # Extrusion in build volume
+                    self.bbox_update(bbox, segment.end)
 
         self.bbox_calc(bbox)
 
@@ -662,6 +652,16 @@ void main() {
         self.layers = sorted(list(layers))
         self.draw_layer_min = 0
         self.draw_layer_max = (len(self.layers) -1)
+
+        self.model_layer_min = None
+        self.model_layer_max = None
+        for n, layer in enumerate(self.model):
+            if layer.model:
+                self.model_layer_max = n
+                if self.model_layer_min == None:
+                    self.model_layer_min = n
+
+
 
         LOG.info(f"Loaded {len(self.layers)} layers.")
         LOG.debug(f"load model end {time.time() - profile_start:0.2f}")
@@ -726,11 +726,9 @@ void main() {
         GLUT.glutInit()
         GLUT.glutSetOption(GLUT.GLUT_MULTISAMPLE, 4)
         GLUT.glutInitDisplayMode(
-            GLUT.GLUT_DOUBLE # |
-            # GLUT.GLUT_ALPHA |
-            # GLUT.GLUT_DEPTH |
-            # GLUT.GLUT_STENCIL |
-            # GLUT.GLUT_MULTISAMPLE
+            GLUT.GLUT_DOUBLE |
+            GLUT.GLUT_DEPTH |
+            GLUT.GLUT_MULTISAMPLE
         )
         self.width = 1200
         self.height = 720

@@ -13,7 +13,7 @@
 
 import re
 import logging
-from typing import Tuple, List
+from typing import Tuple
 from dataclasses import dataclass
 
 import numpy as np
@@ -45,8 +45,15 @@ class Layer:
     G-code layer
     """
 
-    def __init__(self, number: int = 0):
+    def __init__(
+            self,
+            number: int,
+            z: float,
+    ):
         self.number = number
+        self.z = z
+        self.model = None
+
         self.segments = []
 
 
@@ -68,7 +75,8 @@ class Parser():
         self.fan_speed = 0
 
 
-    def parse_line(self, line, n=None):
+    @staticmethod
+    def parse_line(line, n=None):
         command = None
         comment = None
         values = {}
@@ -93,8 +101,12 @@ class Parser():
         layers = []
         extrusion_z_values = set()
 
-        layers.append(Layer(number=len(extrusion_z_values)))
-        extrusion_z_values.add(0)
+        initial_z_value = 0
+        layers.append(Layer(
+            number=len(extrusion_z_values),
+            z=initial_z_value
+        ))
+        extrusion_z_values.add(initial_z_value)
 
         for n, line in enumerate(fp, 1):
             line = line.rstrip()
@@ -134,15 +146,15 @@ class Parser():
                 if values:
                     raise NotImplementedError(f"G0: {values}")
 
-                if (
-                        (
-                            x_value is not None or
-                            y_value is not None
-                        ) and
-                        self.position[2] not in extrusion_z_values
-                ):
-                    layers.append(Layer(number=len(extrusion_z_values)))
-                    extrusion_z_values.add(self.position[2])
+                if (x_value is not None or y_value is not None):
+                    if e_value and e_value > 0:
+                        if self.position[2] not in extrusion_z_values:
+                            layers.append(Layer(
+                                number=len(extrusion_z_values),
+                                z=self.position[2]
+                            ))
+                            extrusion_z_values.add(self.position[2])
+                        layers[-1].model = True
 
                 end_p = np.copy(self.position)
                 end_e = self.extrusion
@@ -184,7 +196,7 @@ class Parser():
                 else:
                     raise NotImplementedError(f"G92: {values}")
             elif command == "M92":
-                LOG.debug(f"Ignore set steps per unit")
+                LOG.debug("Ignore set steps per unit")
             elif command in ("M104", "M109"):
                 if "S" in values:
                     self.tool_temp = float(values.pop("S"))
