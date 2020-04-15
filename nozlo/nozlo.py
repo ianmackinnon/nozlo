@@ -405,7 +405,7 @@ void main() {
         if key == b'f':
             self.frame_model()
         if key == b's':
-            self.update_model_draw(toggle_single=True)
+            self.update_model_draw(single=not self.draw_single_layer)
 
         self.update_cursor(x, y)
         GLUT.glutPostRedisplay()
@@ -509,7 +509,7 @@ void main() {
         self.camera[2] = camera2[2]
 
 
-    def update_model_draw(self, layer=None, toggle_single=None):
+    def update_model_draw(self, layer=None, single=None):
         """
         `layer`: absolute layer number or `-1` for last layer.
         """
@@ -524,8 +524,8 @@ void main() {
             else:
                 target_max = max(0, min(last, layer))
 
-        if toggle_single:
-            self.draw_single_layer = not self.draw_single_layer
+        if single is not None:
+            self.draw_single_layer = single
 
         if self.draw_single_layer:
             target_min = target_max

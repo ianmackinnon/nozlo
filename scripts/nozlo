@@ -44,6 +44,15 @@ def main():
         version=__version__)
 
     parser.add_argument(
+        "--layer", "-l",
+        type=int,
+        help="Layer number to display.")
+    parser.add_argument(
+        "--single", "-s",
+        action="store_true",
+        help="Show only the single current layer.")
+
+    parser.add_argument(
         "gcode",
         metavar="GCODE",
         type=Path,
@@ -62,6 +71,10 @@ def main():
 
     app = Nozlo()
     app.load_model(args.gcode)
+    if args.layer:
+        app.update_model_draw(layer=args.layer)
+    if args.single:
+        app.update_model_draw(single=args.single)
     app.run()
 
 

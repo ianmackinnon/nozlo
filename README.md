@@ -17,19 +17,22 @@ python3 -m pip install -e git+https://github.com/ianmackinnon/nozlo#egg=nozlo
 ## Usage
 
 ```
-usage: nozlo [-h] [--verbose] [--quiet] [--version] GCODE
+usage: nozlo [-h] [--verbose] [--quiet] [--version] [--layer LAYER] [--single]
+             GCODE
 
 G-code viewer.
 
 positional arguments:
-  GCODE          Path to G-code file.
+  GCODE                 Path to G-code file.
 
 optional arguments:
-  -h, --help     show this help message and exit
-  --verbose, -v  Print verbose information for debugging.
-  --quiet, -q    Suppress warnings.
-  --version, -V  show program's version number and exit
-
+  -h, --help            show this help message and exit
+  --verbose, -v         Print verbose information for debugging.
+  --quiet, -q           Suppress warnings.
+  --version, -V         show program's version number and exit
+  --layer LAYER, -l LAYER
+                        Layer number to display.
+  --single, -s          Show only the single current layer.
 ```
 
 
