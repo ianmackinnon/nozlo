@@ -91,52 +91,58 @@ class Parser():
 
     def parse(self, fp):
         layers = []
-        number = 0
-        layer = Layer(number=number)
+        extrusion_z_values = set()
 
-        re_layer_move_slic3r = re.compile(r"move to next layer \(([\d]+)\)")
+        layers.append(Layer(number=len(extrusion_z_values)))
+        extrusion_z_values.add(0)
+
         for n, line in enumerate(fp, 1):
             line = line.rstrip()
 
-            command, values, comment = self.parse_line(line, n=n)
-
-            if comment:
-                layer_match = re_layer_move_slic3r.search(comment)
-                if layer_match:
-                    comment_number = int(layer_match.group(1))
-                    if comment_number < number:
-                        raise Exception(f"Layer decrease from {number} to {comment_number}.")
-                    while number < comment_number:
-                        layers.append(layer)
-                        number += 1
-                        layer = Layer(number=number)
+            command, values, _comment = self.parse_line(line, n=n)
 
             if command is None:
                 continue
 
             if command in ("G0", "G1"):
-
                 start_p = np.copy(self.position)
                 start_e = self.extrusion
+                x_value = None
+                y_value = None
+                e_value = None
 
                 if self.relative is None:
                     raise NotImplementedError(f"G0: absolute/relative mode not set")
                 if "X" in values:
-                    self.position[0] = self.position[0] * self.relative + float(values.pop("X"))
+                    x_value = float(values.pop("X"))
+                    self.position[0] = self.position[0] * self.relative + x_value
                 if "Y" in values:
-                    self.position[1] = self.position[1] * self.relative + float(values.pop("Y"))
+                    y_value = float(values.pop("Y"))
+                    self.position[1] = self.position[1] * self.relative + y_value
 
                 if "Z" in values:
-                    self.position[2] = self.position[2] * self.relative + float(values.pop("Z"))
+                    z_value = float(values.pop("Z"))
+                    self.position[2] = self.position[2] * self.relative + z_value
 
                 if "E" in values:
-                    self.extrusion = self.extrusion * self.relative + float(values.pop("E"))
+                    e_value = float(values.pop("E"))
+                    self.extrusion = self.extrusion * self.relative + e_value
 
                 if "F" in values:
                     self.feedrate = float(values.pop("F"))
 
                 if values:
                     raise NotImplementedError(f"G0: {values}")
+
+                if (
+                        (
+                            x_value is not None or
+                            y_value is not None
+                        ) and
+                        self.position[2] not in extrusion_z_values
+                ):
+                    layers.append(Layer(number=len(extrusion_z_values)))
+                    extrusion_z_values.add(self.position[2])
 
                 end_p = np.copy(self.position)
                 end_e = self.extrusion
@@ -145,7 +151,7 @@ class Parser():
                 distance_e = end_e - start_e
                 width = distance_e / distance_p if distance_p else 0
 
-                layer.segments.append(Segment(
+                layers[-1].segments.append(Segment(
                     start=start_p,
                     end=end_p,
                     width=width,
@@ -154,7 +160,6 @@ class Parser():
                     bed_temp=self.bed_temp,
                     fan_speed=self.fan_speed,
                 ))
-                # lines.append((start_p, end_p, width, self.feedrate))
 
             elif command == "G21":
                 self.unit_multiplier = 1
@@ -207,8 +212,5 @@ class Parser():
                 LOG.debug(f"Ignore adjust acceleration: {command} {values}")
             else:
                 LOG.debug(f"{n}: Ignoring {line}")
-
-        if layer.segments:
-            layers.append(layer)
 
         return layers
