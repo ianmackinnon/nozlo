@@ -15,16 +15,23 @@ import time
 import math
 import logging
 import colorsys
+from pathlib import Path
 
+import appdirs
 import numpy as np
 from OpenGL import GL, GLU, GLUT
 from OpenGL.GL.shaders import compileShader, compileProgram
+import yaml
 
 from nozlo.parser import Parser
 
 
+
 LOG = logging.getLogger("nozlo")
 
+
+PROFILE = False
+UPDATE_DELAY_SECONDS = 1
 
 
 POSITION_VECTOR_SIZE = 3
@@ -32,6 +39,8 @@ POSITION_VECTOR_SIZE = 3
 
 
 class Nozlo():
+    name = "nozlo"
+
     bed_color = (0.3, 0.3, 0.3)
     background_color = (0.18, 0.18, 0.18)
     high_feedrate = 100 * 60
@@ -39,7 +48,8 @@ class Nozlo():
     up_vector = np.array([0, 0, 1], dtype="float32")
 
     def __init__(self):
-        self.title = None
+        # Internal
+
         self.window = None
 
         self.program = None
@@ -51,45 +61,60 @@ class Nozlo():
 
         self.aspect = None
 
-        self.aim = np.array([0, 0, 0], dtype="float32")
-        self.yaw = 45;
-        self.pitch = 30;
-
-        self.distance = 45;
-
         self.view_angle = 50
         self.near_plane = 0.1
         self.far_plane = 1000
 
-        self.ortho = False
-
         self.camera = np.array([0, 0, 0], dtype="float32")
-
-        self.model = None
-        self.lines_bed = None
+        self.draw_layer_min = None
+        self.bed_center = None
+        self.bed_size = None
 
         self.layers = None
 
-        self.draw_layer_max = None
-        self.draw_layer_min = None
-        self.draw_single_layer = False
+        self.model_path = None
+        self.title = None
 
         self.model_center = None
         self.model_size = None
-        self.bed_center = None
-        self.bed_size = None
         self.model_layer_min = None
         self.model_layer_max = None
 
-        self.line_buffer_length = None
         self.line_buffer_position = None
         self.line_buffer_color = None
         self.line_array = None
 
+        self.line_buffer_length = None
         self.bed_array_chunk = []
         self.model_layer_chunks = []
 
+        self.state = None
+        self.last_save_state = None
+        self.last_update_time = None
+
+        # Machine
+
+        self.lines_bed = None
+
+        # Model
+
+        self.model = None
         self.max_feedrate = 0
+
+        # Display
+
+        self.aim = np.array([0, 0, 0], dtype="float32")
+        self.yaw = 45
+        self.pitch = 30
+        self.distance = 45
+        self.ortho = False
+
+        self.draw_layer_max = None
+        self.draw_single_layer = False
+
+        # Initialise
+
+        self.init_files()
 
         self.load_bed()
 
@@ -111,6 +136,21 @@ class Nozlo():
             cls.unit(v1),
             cls.unit(v2),
         ), -1.0, 1.0))
+
+
+    def init_files(self):
+        self.cache_dir_path = Path(appdirs.user_cache_dir(self.name))
+        self.config_dir_path = Path(appdirs.user_config_dir(self.name))
+
+        for path in [self.cache_dir_path, self.config_dir_path]:
+            if not path.exists():
+                path.mkdir(parents=True, exist_ok=True)
+                LOG.debug(f"Created directory `{path}`")
+
+        self.config_path = self.config_dir_path / "nozlo.yml"
+
+        if not self.config_path.exists():
+            self.save_config()
 
 
     def init_program(self):
@@ -395,16 +435,17 @@ void main() {
 
 
     def display(self):
-        LOG.debug("display start")
-        start = time.time()
+        if PROFILE:
+            LOG.debug("display start")
+            profile_start = time.time()
 
         self.render_3d_lines()
         self.render_2d_hud()
 
         GLUT.glutSwapBuffers()
 
-        duration = time.time() - start
-        LOG.debug(f"display end {duration:0.2f}")
+        if PROFILE:
+            LOG.debug(f"display end {time.time() - profile_start:0.2f}")
 
 
     def _display(self):
@@ -427,10 +468,12 @@ void main() {
             self.frame_bed()
         if key == b'f':
             self.frame_model()
-        if key == b's':
-            self.update_model_draw(single=not self.draw_single_layer)
         if key == b'o':
             self.ortho = not self.ortho
+            self.update_state()
+
+        if key == b's':
+            self.update_model_draw(single=not self.draw_single_layer)
 
         self.update_cursor(x, y)
         GLUT.glutPostRedisplay()
@@ -474,6 +517,7 @@ void main() {
         ]))
 
         self.camera = self.aim + camera * self.distance
+        self.update_state()
 
 
     def frame_model(self):
@@ -519,7 +563,7 @@ void main() {
         if pitch:
             self.pitch += pitch
             limit = 90 * 0.999
-            self.pitch = np.clip(self.pitch, -limit, limit)
+            self.pitch = float(np.clip(self.pitch, -limit, limit))
 
         self.update_camera_position()
 
@@ -553,6 +597,7 @@ void main() {
         ):
             self.draw_layer_max = target_max
             self.draw_layer_min = target_min
+            self.update_state()
 
 
     def mouse(self, button, state, x, y):
@@ -640,10 +685,12 @@ void main() {
     def load_model(self, gcode_path):
         parser = Parser()
 
-        LOG.debug("load model start")
-        profile_start = time.time()
+        if PROFILE:
+            LOG.debug("load model start")
+            profile_start = time.time()
 
         self.title = f"Nozlo: {gcode_path.name}"
+        self.model_path = gcode_path.resolve()
 
         with gcode_path.open() as fp:
             self.model = parser.parse(fp)
@@ -662,7 +709,7 @@ void main() {
         self.bbox_calc(bbox)
 
         self.model_center = bbox["center"]
-        self.model_size = np.linalg.norm(bbox["max"] - bbox["min"])
+        self.model_size = float(np.linalg.norm(bbox["max"] - bbox["min"]))
 
         self.layers = sorted(list(layers))
         self.draw_layer_min = 0
@@ -677,9 +724,16 @@ void main() {
                     self.model_layer_min = n
 
         LOG.info(f"Loaded {len(self.layers)} layers.")
-        LOG.debug(f"load model end {time.time() - profile_start:0.2f}")
+        if PROFILE:
+            LOG.debug(f"load model end {time.time() - profile_start:0.2f}")
 
-        self.frame_model()
+        config = self.load_config()
+        key = str(self.model_path)
+        state = config["models"].get(key, None)
+        if state:
+            self.set_state(state)
+        else:
+            self.frame_model()
 
 
     def load_bed(self):
@@ -734,11 +788,89 @@ void main() {
 
         self.bbox_calc(bbox)
         self.bed_center = bbox["center"]
-        self.bed_size = np.linalg.norm(bbox["max"] - bbox["min"])
+        self.bed_size = float(np.linalg.norm(bbox["max"] - bbox["min"]))
 
 
     def idle(self):
-        GLUT.glutPostRedisplay()
+        now = time.time()
+        if (
+                self.state and
+                self.state != self.last_save_state and
+                self.last_update_time and
+                now > self.last_update_time + UPDATE_DELAY_SECONDS
+        ):
+            self.save_state()
+        else:
+            GLUT.glutPostRedisplay()
+
+
+    def set_state(self, state) -> None:
+        self.aim[0] = state["aim"][0]
+        self.aim[1] = state["aim"][1]
+        self.aim[2] = state["aim"][2]
+        self.yaw = state["yaw"]
+        self.pitch = state["pitch"]
+        self.distance = state["distance"]
+        self.ortho = state["ortho"]
+        self.draw_layer_max = state["layer"]
+        self.draw_single_layer = state["single"]
+
+        self.update_model_draw()
+        self.update_camera_position()
+
+
+    def update_state(self) -> None:
+        self.state = {
+            "aim": [float(v) for v in self.aim],
+            "yaw": self.yaw,
+            "pitch": self.pitch,
+            "distance": self.distance,
+            "ortho": self.ortho,
+            "layer": self.draw_layer_max,
+            "single": self.draw_single_layer,
+        }
+        self.last_update_time = time.time()
+
+
+    @staticmethod
+    def default_config():
+        return {
+            "models": {}
+        }
+
+
+    def load_config(self):
+        config = None
+        try:
+            config = yaml.safe_load(self.config_path.read_text())
+        except:
+            LOG.error(f"Failed to load `{self.config_path}`.")
+        else:
+            if config is None:
+                LOG.error(f"Empty config `{self.config_path}`.")
+        if config is None:
+            LOG.error(f"Deleted `{self.config_path}`.")
+            self.config_path.unlink()
+            config = self.default_config()
+
+        return config
+
+
+    def save_config(self, config=None):
+        if config is None:
+            config = self.default_config()
+
+        with self.config_path.open("w") as fp:
+            yaml.dump(config, fp)
+            LOG.debug(f"Saved config `{self.config_path}`")
+
+
+    def save_state(self):
+        config = self.load_config()
+        key = str(self.model_path)
+        config["models"][key] = self.state
+        self.save_config(config)
+        self.last_save_state = self.state
 
 
     def run(self):
