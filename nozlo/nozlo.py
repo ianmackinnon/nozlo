@@ -16,6 +16,7 @@ import math
 import logging
 import colorsys
 from pathlib import Path
+from hashlib import sha1
 
 import appdirs
 import numpy as np
@@ -23,14 +24,14 @@ from OpenGL import GL, GLU, GLUT
 from OpenGL.GL.shaders import compileShader, compileProgram
 import yaml
 
-from nozlo.parser import Parser
+from nozlo.parser import Parser, Layer, Bbox
 
 
 
 LOG = logging.getLogger("nozlo")
 
 
-PROFILE = False
+PROFILE = True
 UPDATE_DELAY_SECONDS = 1
 
 
@@ -434,8 +435,8 @@ void main() {
             self.text(x, y, f"Z:   none")
 
 
-    def display(self):
-        if PROFILE:
+    def display(self, profile=None):
+        if PROFILE and profile:
             LOG.debug("display start")
             profile_start = time.time()
 
@@ -444,7 +445,7 @@ void main() {
 
         GLUT.glutSwapBuffers()
 
-        if PROFILE:
+        if PROFILE and profile:
             LOG.debug(f"display end {time.time() - profile_start:0.2f}")
 
 
@@ -651,39 +652,26 @@ void main() {
         GLUT.glutPostRedisplay()
 
 
-    @staticmethod
-    def bbox_init():
-        return {
-            "center": np.array([0, 0, 0], dtype="float32"),
-            "min": np.array([0, 0, 0], dtype="float32"),
-            "max": np.array([0, 0, 0], dtype="float32"),
-            "_count": 0,
-        }
+    def save_model_cache(self, model, path):
+        with path.open("wb") as fp:
+            for layer in model:
+                layer.pack_into(fp)
 
 
-    @staticmethod
-    def bbox_update(bbox, point):
-        for i in range(3):
-            bbox["center"][i] += point[i]
-            if not bbox["_count"]:
-                bbox["min"][i] = point[i]
-                bbox["max"][i] = point[i]
-            else:
-                bbox["min"][i] = min(bbox["min"][i], point[i])
-                bbox["max"][i] = max(bbox["max"][i], point[i])
-        bbox["_count"] += 1
+    def load_model_cache(self, path):
+        model = []
+        with path.open("rb") as fp:
+            while True:
+                layer = Layer.unpack_from(fp)
+                if layer:
+                    model.append(layer)
+                else:
+                    break
 
-
-    @staticmethod
-    def bbox_calc(bbox):
-        if bbox["_count"]:
-            bbox["center"] /= bbox["_count"]
-        del bbox["_count"]
-
+        return model or None
 
 
     def load_model(self, gcode_path):
-        parser = Parser()
 
         if PROFILE:
             LOG.debug("load model start")
@@ -692,24 +680,64 @@ void main() {
         self.title = f"Nozlo: {gcode_path.name}"
         self.model_path = gcode_path.resolve()
 
-        with gcode_path.open() as fp:
-            self.model = parser.parse(fp)
+        hasher = sha1()
+        hasher.update(str(self.model_path).encode())
+        model_path_hash = hasher.hexdigest()[:7]
+        model_cache_path = (
+            self.cache_dir_path /
+            f"{self.model_path.stem}.{model_path_hash}.cache"
+        )
+
+        self.model = None
+        if model_cache_path.exists():
+            cache_mtime = model_cache_path.stat().st_mtime
+            gcode_mtime = gcode_path.stat().st_mtime
+            if cache_mtime >= gcode_mtime:
+                try:
+                    cache_start = time.time()
+                    self.model = self.load_model_cache(model_cache_path)
+                    cache_duration = time.time() - cache_start
+                except Exception as e:
+                    raise e
+                    LOG.error(e)
+            else:
+                LOG.debug(f"Cache {cache_mtime} is older than G-code {gcode_mtime}.")
+
+        if self.model is not None:
+            if PROFILE:
+                LOG.debug(f"Read from cache in {cache_duration:0.2f}: `{model_cache_path}`")
+        else:
+            with gcode_path.open() as fp:
+                gcode_start = time.time()
+                self.model = Parser().parse(fp)
+                gcode_duration = time.time() - gcode_start
+
+            if PROFILE:
+                LOG.debug(f"Read from gcode in {gcode_duration:0.2f}: `{gcode_path}`")
+
+            calc_start = time.time()
+            for layer in self.model:
+                layer.calc_bounds()
+            calc_duration = time.time() - calc_start
+            if PROFILE:
+                LOG.debug(f"Calc layer bounds in {calc_duration:0.2f}")
+
+            self.save_model_cache(self.model, model_cache_path)
+            cache_mtime = model_cache_path.stat().st_mtime
+            LOG.debug(f"Saved model cache `{model_cache_path}` {cache_mtime}")
 
         layers = set()
 
-        bbox = self.bbox_init()
-
+        bbox = Bbox()
         for layer in self.model:
             layers.add(layer.number)
-            for segment in layer.segments:
-                if segment.width and segment.end[0] >= 0 and segment.end[1] >= 0:
-                    # Extrusion in build volume
-                    self.bbox_update(bbox, segment.end)
 
-        self.bbox_calc(bbox)
+            if layer.bbox_model.count:
+                bbox.update(layer.bbox_model.min)
+                bbox.update(layer.bbox_model.max)
 
-        self.model_center = bbox["center"]
-        self.model_size = float(np.linalg.norm(bbox["max"] - bbox["min"]))
+        self.model_center = bbox.center()
+        self.model_size = bbox.size()
 
         self.layers = sorted(list(layers))
         self.draw_layer_min = 0
@@ -718,7 +746,7 @@ void main() {
         self.model_layer_min = None
         self.model_layer_max = None
         for n, layer in enumerate(self.model):
-            if layer.model:
+            if layer.bbox_model is not None:
                 self.model_layer_max = n
                 if self.model_layer_min == None:
                     self.model_layer_min = n
@@ -781,14 +809,13 @@ void main() {
                     ],
                 ]
 
-        bbox = self.bbox_init()
+        bbox = Bbox()
         for (start, end) in self.lines_reference:
-            self.bbox_update(bbox, start)
-            self.bbox_update(bbox, end)
+            bbox.update(start)
+            bbox.update(end)
 
-        self.bbox_calc(bbox)
-        self.reference_center = bbox["center"]
-        self.reference_size = float(np.linalg.norm(bbox["max"] - bbox["min"]))
+        self.reference_center = bbox.center()
+        self.reference_size = bbox.size()
 
 
     def idle(self):
