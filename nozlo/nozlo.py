@@ -41,7 +41,7 @@ POSITION_VECTOR_SIZE = 3
 class Nozlo():
     name = "nozlo"
 
-    bed_color = (0.3, 0.3, 0.3)
+    reference_color = (0.3, 0.3, 0.3)
     background_color = (0.18, 0.18, 0.18)
     high_feedrate = 100 * 60
 
@@ -67,8 +67,8 @@ class Nozlo():
 
         self.camera = np.array([0, 0, 0], dtype="float32")
         self.draw_layer_min = None
-        self.bed_center = None
-        self.bed_size = None
+        self.reference_center = None
+        self.reference_size = None
 
         self.layers = None
 
@@ -85,7 +85,7 @@ class Nozlo():
         self.line_array = None
 
         self.line_buffer_length = None
-        self.bed_array_chunk = []
+        self.reference_array_chunk = []
         self.model_layer_chunks = []
 
         self.state = None
@@ -94,7 +94,7 @@ class Nozlo():
 
         # Machine
 
-        self.lines_bed = None
+        self.lines_reference = None
 
         # Model
 
@@ -116,7 +116,7 @@ class Nozlo():
 
         self.init_files()
 
-        self.load_bed()
+        self.load_reference()
 
 
     @staticmethod
@@ -192,17 +192,17 @@ void main() {
             self.program, "modelview_matrix")
 
 
-    def add_lines_bed(self, line_p, line_c):
+    def add_lines_reference(self, line_p, line_c):
         chunk_start = self.line_buffer_length
 
-        for (start, end) in self.lines_bed:
+        for (start, end) in self.lines_reference:
             line_p += [start[0], start[1], start[2]]
             line_p += [end[0], end[1], end[2]]
-            line_c += self.bed_color
-            line_c += self.bed_color
+            line_c += self.reference_color
+            line_c += self.reference_color
             self.line_buffer_length += 2
 
-        self.bed_array_chunk = [chunk_start, self.line_buffer_length]
+        self.reference_array_chunk = [chunk_start, self.line_buffer_length]
 
 
     @staticmethod
@@ -262,7 +262,7 @@ void main() {
         line_c = []
         self.line_buffer_length = 0
 
-        self.add_lines_bed(line_p, line_c)
+        self.add_lines_reference(line_p, line_c)
         self.add_lines_model(line_p, line_c)
 
         GL.glBindVertexArray(self.line_array)
@@ -349,9 +349,9 @@ void main() {
         GL.glEnableVertexAttribArray(0)
         GL.glEnableVertexAttribArray(1)
 
-        # Draw bed
-        start = self.bed_array_chunk[0]
-        end = self.bed_array_chunk[1]
+        # Draw reference
+        start = self.reference_array_chunk[0]
+        end = self.reference_array_chunk[1]
         GL.glDrawArrays(GL.GL_LINES, start, end - start)
 
         # Draw model layers
@@ -465,7 +465,7 @@ void main() {
             GLUT.glutLeaveMainLoop()
 
         if key == b'a':
-            self.frame_bed()
+            self.frame_reference()
         if key == b'f':
             self.frame_model()
         if key == b'o':
@@ -527,9 +527,9 @@ void main() {
         self.update_camera_position()
 
 
-    def frame_bed(self):
-        self.aim = self.bed_center.copy()
-        self.distance = self.bed_size
+    def frame_reference(self):
+        self.aim = self.reference_center.copy()
+        self.distance = self.reference_size
 
         self.update_camera_position()
 
@@ -736,41 +736,41 @@ void main() {
             self.frame_model()
 
 
-    def load_bed(self):
-        bed_width = 214
-        bed_length = 214
+    def load_reference(self):
+        reference_width = 214
+        reference_length = 214
         grid_step = 30
         grid_x = 9
         grid_y = 9
         cross_xy = 10
 
-        self.lines_bed = [
+        self.lines_reference = [
             [
                 [0, 0, 0],
-                [bed_width, 0, 0],
+                [reference_width, 0, 0],
             ],
             [
-                [bed_width, 0, 0],
-                [bed_width, bed_length, 0],
+                [reference_width, 0, 0],
+                [reference_width, reference_length, 0],
             ],
             [
-                [bed_width, bed_length, 0],
-                [0, bed_length, 0],
+                [reference_width, reference_length, 0],
+                [0, reference_length, 0],
             ],
             [
-                [0, bed_length, 0],
+                [0, reference_length, 0],
                 [0, 0, 0],
             ],
         ]
 
-        cx = bed_width / 2
-        cy = bed_length / 2
+        cx = reference_width / 2
+        cy = reference_length / 2
 
         for x in range(grid_x):
             px = cx + grid_step * (x - (grid_x - 1) / 2)
             for y in range(grid_y):
                 py = cy + grid_step * (y - (grid_y - 1) / 2)
-                self.lines_bed += [
+                self.lines_reference += [
                     [
                         [px - cross_xy / 2, py, 0],
                         [px + cross_xy / 2, py, 0],
@@ -782,13 +782,13 @@ void main() {
                 ]
 
         bbox = self.bbox_init()
-        for (start, end) in self.lines_bed:
+        for (start, end) in self.lines_reference:
             self.bbox_update(bbox, start)
             self.bbox_update(bbox, end)
 
         self.bbox_calc(bbox)
-        self.bed_center = bbox["center"]
-        self.bed_size = float(np.linalg.norm(bbox["max"] - bbox["min"]))
+        self.reference_center = bbox["center"]
+        self.reference_size = float(np.linalg.norm(bbox["max"] - bbox["min"]))
 
 
     def idle(self):

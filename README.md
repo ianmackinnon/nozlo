@@ -63,7 +63,7 @@ Keyboard
 -   **Up**: go up a layer
 -   **Down**: go down a layer
 -   **F**: frame model in camera
--   **A**: frame build surface in camera
+-   **A**: frame reference geometry (eg. build surface) in camera
 -   **S**: toggle showing single layer
 -   **O**: toggle orthographic/perspective projection
 
