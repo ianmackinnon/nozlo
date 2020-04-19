@@ -15,6 +15,8 @@ import time
 import math
 import logging
 import colorsys
+from enum import IntEnum
+from typing import Union
 from pathlib import Path
 from hashlib import sha1
 
@@ -36,6 +38,12 @@ UPDATE_DELAY_SECONDS = 1
 
 
 POSITION_VECTOR_SIZE = 3
+
+
+
+class SpecialLayer(IntEnum):
+    FIRST = -10  # First layer of model
+    LAST = -20  # Last layer of model
 
 
 
@@ -69,7 +77,8 @@ class Nozlo():
         self.far_plane = 1000
 
         self.camera = np.array([0, 0, 0], dtype="float32")
-        self.draw_layer_min = None
+        self.draw_layer_min: int = 0
+        self.draw_layer_max: int = 0
         self.reference_bbox = None
 
         self.model_path = None
@@ -107,7 +116,7 @@ class Nozlo():
         self.distance = 45
         self.ortho = False
 
-        self.draw_layer_max = None
+        self.layer: Union[int, SpecialLayer] = 0
         self.draw_single_layer = False
 
         # Initialise
@@ -480,15 +489,12 @@ void main() {
 
     def special(self, key, x, y):
         if key == GLUT.GLUT_KEY_HOME:
-            if self.draw_layer_max == self.model_layer_min:
+            if self.layer == SpecialLayer.FIRST:
                 self.update_model_draw(layer=0)
             else:
-                self.update_model_draw(layer=self.model_layer_min)
+                self.update_model_draw(layer=SpecialLayer.FIRST)
         if key == GLUT.GLUT_KEY_END:
-            if self.draw_layer_max == self.model_layer_max:
-                self.update_model_draw(layer=-1)
-            else:
-                self.update_model_draw(layer=self.model_layer_max)
+            self.update_model_draw(layer=SpecialLayer.LAST)
 
         if key == GLUT.GLUT_KEY_DOWN:
             self.update_model_draw(layer=self.draw_layer_max - 1)
@@ -588,32 +594,38 @@ void main() {
         self.update_camera_position()
 
 
-    def update_model_draw(self, layer=None, single=None):
+    def update_model_draw(
+            self,
+            layer: Union[None, int, SpecialLayer] = None,
+            single: Union[None, bool] = None
+    ):
         """
         `layer`: absolute layer number or `-1` for last layer.
         """
 
-        last = len(self.model) - 1
-        target_min = self.draw_layer_min
-        target_max = self.draw_layer_max
+        draw_layer_max_ = self.draw_layer_max
+        draw_layer_min_ = self.draw_layer_min
 
         if layer is not None:
-            if layer == -1:
-                target_max = last
-            else:
-                target_max = layer
+            self.layer = layer
+
+        if self.layer == SpecialLayer.FIRST:
+            self.draw_layer_max = self.model_layer_min
+        elif self.layer == SpecialLayer.LAST:
+            self.draw_layer_max = self.model_layer_max
+        else:
+            self.layer = max(0, min(len(self.model) - 1, self.layer))
+            self.draw_layer_max = self.layer
 
         if single is not None:
             self.draw_single_layer = single
 
-        target_max = max(0, min(last, target_max))
-        target_min = target_max if self.draw_single_layer else 0
+        self.draw_layer_min = self.draw_layer_max if self.draw_single_layer else 0
+
         if (
-                target_max != self.draw_layer_max or
-                target_min != self.draw_layer_min
+                self.draw_layer_min != draw_layer_min_ or
+                self.draw_layer_max != draw_layer_max_
         ):
-            self.draw_layer_max = target_max
-            self.draw_layer_min = target_min
             self.update_state()
 
 
@@ -742,9 +754,6 @@ void main() {
             cache_mtime = model_cache_path.stat().st_mtime
             LOG.debug(f"Saved model cache `{model_cache_path}` {cache_mtime}")
 
-        self.draw_layer_min = 0
-        self.draw_layer_max = (len(self.model) -1)
-
         self.model_layer_min = None
         self.model_layer_max = None
         for n, layer in enumerate(self.model):
@@ -839,7 +848,8 @@ void main() {
         self.pitch = state["pitch"]
         self.distance = state["distance"]
         self.ortho = state["ortho"]
-        self.draw_layer_max = state["layer"]
+
+        self.layer = int(state["layer"])
         self.draw_single_layer = state["single"]
 
         self.update_model_draw()
@@ -853,7 +863,7 @@ void main() {
             "pitch": self.pitch,
             "distance": self.distance,
             "ortho": self.ortho,
-            "layer": self.draw_layer_max,
+            "layer": int(self.layer),
             "single": self.draw_single_layer,
         }
         self.last_update_time = time.time()
@@ -875,6 +885,7 @@ void main() {
         else:
             if config is None:
                 LOG.error(f"Empty config `{self.config_path}`.")
+
         if config is None:
             LOG.error(f"Deleted `{self.config_path}`.")
             self.config_path.unlink()

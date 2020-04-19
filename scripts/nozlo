@@ -17,7 +17,7 @@ import logging
 import argparse
 from pathlib import Path
 
-from nozlo.nozlo import Nozlo
+from nozlo.nozlo import Nozlo, SpecialLayer
 from nozlo import __version__
 
 
@@ -26,6 +26,28 @@ LOG = logging.getLogger("nozlo")
 
 
 def main():
+
+    class LayerAction(argparse.Action):
+        message = (
+            "`{self.dest}` argument must be a positive integer, "
+            "`first` or `last`.")
+
+        def __call__(self, parser, namespace, values, option_string=None):
+            if values == "first":
+                values = SpecialLayer.FIRST
+            elif values == "last":
+                values = SpecialLayer.LAST
+            else:
+                try:
+                    values = int(values)
+                except ValueError:
+                    raise argparse.ArgumentTypeError(self.message)
+
+                if values < 0:
+                    raise argparse.ArgumentTypeError(self.message)
+
+            setattr(namespace, self.dest, values)
+
     parser = argparse.ArgumentParser(
         description="""G-code viewer.""")
 
@@ -45,8 +67,8 @@ def main():
 
     parser.add_argument(
         "--layer", "-l",
-        type=int,
-        help="Layer number to display.")
+        action=LayerAction,
+        help="Layer number to display, from 0 to n-1, or `first` or `last` to indicate the first layer containing the model or last layer.")
     parser.add_argument(
         "--single", "-s",
         action="store_true",
