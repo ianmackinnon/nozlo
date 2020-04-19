@@ -14,7 +14,7 @@
 import re
 import struct
 import logging
-from typing import Tuple, Union, BinaryIO, ClassVar
+from typing import Tuple, BinaryIO, ClassVar
 from dataclasses import dataclass
 
 import numpy as np
@@ -95,10 +95,22 @@ class Segment:
 class Bbox:
     struct_format = "f fff fff"
 
-    def __init__(self, count=0, min_=[0, 0, 0], max_=[0, 0, 0]):
+    def __init__(self, count=None, min_=None, max_=None):
+        if count is None:
+            count = 0
+        if min_ is None:
+            min_ = [0, 0, 0]
+        if max_ is None:
+            max_ = [0, 0, 0]
+
         self.count = count
         self.min = np.array(min_, dtype="float32")
         self.max = np.array(max_, dtype="float32")
+
+
+    def __bool__(self):
+        return bool(self.count)
+
 
     def update(self, point):
         for i in range(3):
@@ -108,13 +120,18 @@ class Bbox:
             else:
                 self.min[i] = min(self.min[i], point[i])
                 self.max[i] = max(self.max[i], point[i])
-            self.count += 1
+        self.count += 1
 
+
+    @property
     def center(self):
-        return (self.max + self.min) / 2
+        return ((self.max + self.min) / 2).copy()
 
+
+    @property
     def size(self):
         return float(np.linalg.norm(self.max - self.min))
+
 
     def pack(self):
         return struct.pack(
@@ -130,6 +147,7 @@ class Bbox:
             self.max[1],
             self.max[2],
         )
+
 
     @classmethod
     def unpack(cls, buf: bytes):
@@ -161,6 +179,7 @@ class Layer:
 
     struct_format = "IfI"
 
+
     def __init__(
             self,
             number: int,
@@ -188,9 +207,9 @@ class Layer:
 
         for segment in self.segments:
             if segment.width and segment.end[0] >= 0 and segment.end[1] >= 0:
+                # Extrusion ends in build volume
                 self.bbox_model.update(segment.start)
                 self.bbox_model.update(segment.end)
-                # Extrusion ends in build volume
             self.bbox_total.update(segment.start)
             self.bbox_total.update(segment.end)
 
@@ -234,14 +253,13 @@ class Layer:
 
     @classmethod
     def unpack_from(cls, in_: BinaryIO):
-        offset = 0
         layer_size = struct.calcsize(cls.struct_format)
         segment_size = struct.calcsize(Segment.struct_format)
         bbox_size = struct.calcsize(Bbox.struct_format)
 
         buf = in_.read(layer_size)
         if not buf:
-            return
+            return None
 
         layer_data = struct.unpack(cls.struct_format, buf)
         (number, z, length) = layer_data
@@ -258,19 +276,19 @@ class Layer:
 
         buf = in_.read(bbox_size)
         if not buf:
-            return
+            return None
 
         layer.bbox_model = Bbox.unpack(buf)
 
         buf = in_.read(bbox_size)
         if not buf:
-            return
+            return None
 
         layer.bbox_total = Bbox.unpack(buf)
 
         buf = in_.read(segment_size)
         if not buf:
-            return
+            return None
 
         layer.max_segment = Segment.unpack(buf)
 

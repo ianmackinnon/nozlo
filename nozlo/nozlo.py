@@ -60,6 +60,8 @@ class Nozlo():
         self.cursor = np.array([0, 0], dtype="int")
         self.button = {v: None for v in range(5)}
 
+        self.width = None
+        self.height = None
         self.aspect = None
 
         self.view_angle = 50
@@ -68,16 +70,11 @@ class Nozlo():
 
         self.camera = np.array([0, 0, 0], dtype="float32")
         self.draw_layer_min = None
-        self.reference_center = None
-        self.reference_size = None
-
-        self.layers = None
+        self.reference_bbox = None
 
         self.model_path = None
         self.title = None
 
-        self.model_center = None
-        self.model_size = None
         self.model_layer_min = None
         self.model_layer_max = None
 
@@ -93,7 +90,7 @@ class Nozlo():
         self.last_save_state = None
         self.last_update_time = None
 
-        # Machine
+        # Reference
 
         self.lines_reference = None
 
@@ -125,7 +122,8 @@ class Nozlo():
         """
         Unit vector
         """
-        return v / np.linalg.norm(v)
+        mag = np.linalg.norm(v)
+        return v / mag if mag else v * 0
 
 
     @classmethod
@@ -468,7 +466,7 @@ void main() {
         if key == b'a':
             self.frame_reference()
         if key == b'f':
-            self.frame_model()
+            self.frame_visible_model()
         if key == b'o':
             self.ortho = not self.ortho
             self.update_state()
@@ -521,16 +519,37 @@ void main() {
         self.update_state()
 
 
-    def frame_model(self):
-        self.aim = self.model_center.copy()
-        self.distance = self.model_size
+    def model_visible_layers(self):
+        """
+        Generate of currently displayed model layers.
+        """
+
+        for n in range(self.draw_layer_min, self.draw_layer_max + 1):
+            yield self.model[n]
+
+
+    def frame_visible_model(self):
+        bbox = Bbox()
+
+        for layer in self.model_visible_layers():
+            if layer.bbox_model:
+                bbox.update(layer.bbox_model.min)
+                bbox.update(layer.bbox_model.max)
+
+        if not bbox:
+            for layer in self.model_visible_layers():
+                bbox.update(layer.bbox_total.min)
+                bbox.update(layer.bbox_total.max)
+
+        self.aim = bbox.center
+        self.distance = bbox.size
 
         self.update_camera_position()
 
 
     def frame_reference(self):
-        self.aim = self.reference_center.copy()
-        self.distance = self.reference_size
+        self.aim = self.reference_bbox.center
+        self.distance = self.reference_bbox.size
 
         self.update_camera_position()
 
@@ -574,7 +593,7 @@ void main() {
         `layer`: absolute layer number or `-1` for last layer.
         """
 
-        last = len(self.layers) - 1
+        last = len(self.model) - 1
         target_min = self.draw_layer_min
         target_max = self.draw_layer_max
 
@@ -582,16 +601,13 @@ void main() {
             if layer == -1:
                 target_max = last
             else:
-                target_max = max(0, min(last, layer))
+                target_max = layer
 
         if single is not None:
             self.draw_single_layer = single
 
-        if self.draw_single_layer:
-            target_min = target_max
-        else:
-            target_min = 0
-
+        target_max = max(0, min(last, target_max))
+        target_min = target_max if self.draw_single_layer else 0
         if (
                 target_max != self.draw_layer_max or
                 target_min != self.draw_layer_min
@@ -726,32 +742,19 @@ void main() {
             cache_mtime = model_cache_path.stat().st_mtime
             LOG.debug(f"Saved model cache `{model_cache_path}` {cache_mtime}")
 
-        layers = set()
-
-        bbox = Bbox()
-        for layer in self.model:
-            layers.add(layer.number)
-
-            if layer.bbox_model.count:
-                bbox.update(layer.bbox_model.min)
-                bbox.update(layer.bbox_model.max)
-
-        self.model_center = bbox.center()
-        self.model_size = bbox.size()
-
-        self.layers = sorted(list(layers))
         self.draw_layer_min = 0
-        self.draw_layer_max = (len(self.layers) -1)
+        self.draw_layer_max = (len(self.model) -1)
 
         self.model_layer_min = None
         self.model_layer_max = None
         for n, layer in enumerate(self.model):
-            if layer.bbox_model is not None:
-                self.model_layer_max = n
+            if layer.bbox_model:
                 if self.model_layer_min == None:
                     self.model_layer_min = n
+                self.model_layer_max = n
 
-        LOG.info(f"Loaded {len(self.layers)} layers.")
+
+        LOG.info(f"Loaded {len(self.model)} layers, ({self.model_layer_max - self.model_layer_min + 1} containing model).")
         if PROFILE:
             LOG.debug(f"load model end {time.time() - profile_start:0.2f}")
 
@@ -761,7 +764,7 @@ void main() {
         if state:
             self.set_state(state)
         else:
-            self.frame_model()
+            self.frame_visible_model()
 
 
     def load_reference(self):
@@ -809,13 +812,10 @@ void main() {
                     ],
                 ]
 
-        bbox = Bbox()
+        self.reference_bbox = Bbox()
         for (start, end) in self.lines_reference:
-            bbox.update(start)
-            bbox.update(end)
-
-        self.reference_center = bbox.center()
-        self.reference_size = bbox.size()
+            self.reference_bbox.update(start)
+            self.reference_bbox.update(end)
 
 
     def idle(self):
