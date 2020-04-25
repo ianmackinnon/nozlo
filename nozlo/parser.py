@@ -25,6 +25,11 @@ LOG = logging.getLogger("parser")
 
 
 
+class ParserVersionException(Exception):
+    pass
+
+
+
 @dataclass
 class Segment:
     """
@@ -35,11 +40,11 @@ class Segment:
 
     start: Tuple[float, float, float]
     end: Tuple[float, float, float]
-    width: float
-    feedrate: float
-    tool_temp: float
-    bed_temp: float
-    fan_speed: float
+    width: float = 0
+    feedrate: float = 0
+    tool_temp: float = 0
+    bed_temp: float = 0
+    fan_speed: float = 0
 
 
     def pack(self):
@@ -172,24 +177,12 @@ class Bbox:
 
 
 
-class Layer:
+class Print:
     """
-    G-code layer
+    A collection of segments
     """
 
-    struct_format = "IfI"
-
-
-    def __init__(
-            self,
-            number: int,
-            z: float,
-    ):
-        self.number = number
-        self.z = z
-
-        self.segments = []
-
+    def __init__(self):
         self.bbox_model = None
         self.bbox_total = None
         self.max_segment = None
@@ -205,9 +198,8 @@ class Layer:
         self.bbox_model = Bbox()
         self.bbox_total = Bbox()
 
-        for segment in self.segments:
-            if segment.width and segment.end[0] >= 0 and segment.end[1] >= 0:
-                # Extrusion ends in build volume
+        for segment, is_model in self.iter_segments():
+            if is_model:
                 self.bbox_model.update(segment.start)
                 self.bbox_model.update(segment.end)
             self.bbox_total.update(segment.start)
@@ -238,6 +230,69 @@ class Layer:
 
 
     def pack_into(self, out: BinaryIO):
+        out.write(self.bbox_model.pack())
+        out.write(self.bbox_total.pack())
+        out.write(self.max_segment.pack())
+
+
+    @staticmethod
+    def unpack_from(instance, in_: BinaryIO) -> None:
+        """
+        Update `instance` in place.
+        """
+
+        bbox_size = struct.calcsize(Bbox.struct_format)
+        segment_size = struct.calcsize(Segment.struct_format)
+
+        buf = in_.read(bbox_size)
+        if not buf:
+            return None
+
+        instance.bbox_model = Bbox.unpack(buf)
+
+        buf = in_.read(bbox_size)
+        if not buf:
+            return None
+
+        instance.bbox_total = Bbox.unpack(buf)
+
+        buf = in_.read(segment_size)
+        if not buf:
+            return None
+
+        instance.max_segment = Segment.unpack(buf)
+
+
+
+class Layer(Print):
+    """
+    G-code layer
+    """
+
+    struct_format = "IfI"
+
+
+    def __init__(
+            self,
+            number: int,
+            z: float,
+    ):
+        self.number = number
+        self.z = z
+
+        self.segments = []
+
+        super().__init__()
+
+
+    def iter_segments(self):
+        for segment in self.segments:
+            # Extrusion ends in build volume:
+            is_model = segment.width and segment.end[0] >= 0 and segment.end[1] >= 0
+            yield(segment, is_model)
+
+
+    def pack_into(self, out: BinaryIO):
         out.write(struct.pack(
             self.struct_format,
             self.number,
@@ -246,16 +301,13 @@ class Layer:
         ))
         for segment in self.segments:
             out.write(segment.pack())
-        out.write(self.bbox_model.pack())
-        out.write(self.bbox_total.pack())
-        out.write(self.max_segment.pack())
+        super().pack_into(out)
 
 
     @classmethod
     def unpack_from(cls, in_: BinaryIO):
         layer_size = struct.calcsize(cls.struct_format)
         segment_size = struct.calcsize(Segment.struct_format)
-        bbox_size = struct.calcsize(Bbox.struct_format)
 
         buf = in_.read(layer_size)
         if not buf:
@@ -267,32 +319,101 @@ class Layer:
             number=number,
             z=z,
         )
-        for s in range(length):
+        for _i in range(length):
             buf = in_.read(segment_size)
             if not buf:
                 break
 
             layer.segments.append(Segment.unpack(buf))
 
-        buf = in_.read(bbox_size)
-        if not buf:
-            return None
-
-        layer.bbox_model = Bbox.unpack(buf)
-
-        buf = in_.read(bbox_size)
-        if not buf:
-            return None
-
-        layer.bbox_total = Bbox.unpack(buf)
-
-        buf = in_.read(segment_size)
-        if not buf:
-            return None
-
-        layer.max_segment = Segment.unpack(buf)
+        Print.unpack_from(layer, in_)
 
         return layer
+
+
+
+class Model(Print):
+    """
+    G-code model
+    """
+
+    version = 0
+    struct_format = "II"
+
+
+    def __init__(self,):
+        self.layers = []
+
+        super().__init__()
+
+
+    def __len__(self):
+        return len(self.layers)
+
+
+    def __iter__(self):
+        for layer in self.layers:
+            yield layer
+
+
+    def __getitem__(self, key):
+        return self.layers[key]
+
+
+    def iter_segments(self):
+        for layer in self.layers:
+            yield(Segment(
+                start=layer.bbox_model.min,
+                end=layer.bbox_model.max,
+            ), True)
+            yield(Segment(
+                start=layer.bbox_total.min,
+                end=layer.bbox_total.max,
+            ), False)
+            yield(layer.max_segment, False)
+
+
+    def pack_into(self, out: BinaryIO):
+        out.write(struct.pack(
+            self.struct_format,
+            self.version,
+            len(self.layers),
+        ))
+        for layer in self.layers:
+            layer.pack_into(out)
+        super().pack_into(out)
+
+
+    @classmethod
+    def unpack_from(cls, in_: BinaryIO):
+        model_size = struct.calcsize(cls.struct_format)
+        layer_size = struct.calcsize(Layer.struct_format)
+
+        buf = in_.read(model_size)
+        if not buf:
+            return None
+
+        model_data = struct.unpack(cls.struct_format, buf)
+        (version, length) = model_data
+
+        if version != cls.version:
+            raise ParserVersionException(
+                f"Cannot load file version {version} into model version {cls.version}.")
+
+        model = cls()
+        for _i in range(length):
+            model.layers.append(Layer.unpack_from(in_))
+
+        Print.unpack_from(model, in_)
+
+        return model
+
+
+
+
+
+
+
 
 
 
@@ -336,11 +457,11 @@ class Parser():
 
 
     def parse(self, fp):
-        layers = []
+        model = Model()
         extrusion_z_values = set()
 
         initial_z_value = 0
-        layers.append(Layer(
+        model.layers.append(Layer(
             number=len(extrusion_z_values),
             z=initial_z_value
         ))
@@ -387,12 +508,11 @@ class Parser():
                 if (x_value is not None or y_value is not None):
                     if e_value and e_value > 0:
                         if self.position[2] not in extrusion_z_values:
-                            layers.append(Layer(
+                            model.layers.append(Layer(
                                 number=len(extrusion_z_values),
                                 z=self.position[2]
                             ))
                             extrusion_z_values.add(self.position[2])
-                        layers[-1].model = True
 
                 end_p = np.copy(self.position)
                 end_e = self.extrusion
@@ -401,7 +521,7 @@ class Parser():
                 distance_e = end_e - start_e
                 width = distance_e / distance_p if distance_p else 0
 
-                layers[-1].segments.append(Segment(
+                model.layers[-1].segments.append(Segment(
                     start=start_p,
                     end=end_p,
                     width=width,
@@ -463,4 +583,4 @@ class Parser():
             else:
                 LOG.debug(f"{n}: Ignoring {line}")
 
-        return layers
+        return model

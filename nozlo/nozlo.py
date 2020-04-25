@@ -28,7 +28,9 @@ from OpenGL import GL, GLU, GLUT
 from OpenGL.GL.shaders import compileShader, compileProgram
 import yaml
 
-from nozlo.parser import Parser, Layer, Bbox
+from nozlo.parser import \
+    ParserVersionException, \
+    Parser, Model, Layer, Bbox
 
 
 
@@ -742,21 +744,14 @@ void main() {
 
     def save_model_cache(self, model, path):
         with path.open("wb") as fp:
-            for layer in model:
-                layer.pack_into(fp)
+            model.pack_into(fp)
 
 
     def load_model_cache(self, path):
-        model = []
         with path.open("rb") as fp:
-            while True:
-                layer = Layer.unpack_from(fp)
-                if layer:
-                    model.append(layer)
-                else:
-                    break
+            model = Model.unpack_from(fp)
 
-        return model or None
+        return model
 
 
     def load_model(self, gcode_path, cache=True):
@@ -786,12 +781,16 @@ void main() {
                         cache_start = time.time()
                         self.model = self.load_model_cache(model_cache_path)
                         cache_duration = time.time() - cache_start
+                    except ParserVersionException as e:
+                        LOG.debug(e)
                     except Exception as e:
                         raise e
                         LOG.error(e)
-                if PROFILE:
-                    LOG.debug(
-                        f"Read from cache in {cache_duration:0.2f}: `{model_cache_path}`")
+                    else:
+                        if PROFILE:
+                            LOG.debug(
+                                f"Read from cache in {cache_duration:0.2f}: "
+                                f"`{model_cache_path}`")
                 else:
                     LOG.debug(f"Cache {cache_mtime} is older than G-code {gcode_mtime}.")
 
@@ -807,6 +806,8 @@ void main() {
             calc_start = time.time()
             for layer in self.model:
                 layer.calc_bounds()
+
+            self.model.calc_bounds()
             calc_duration = time.time() - calc_start
             if PROFILE:
                 LOG.debug(f"Calc layer bounds in {calc_duration:0.2f}")
@@ -817,12 +818,11 @@ void main() {
 
         self.model_layer_min = None
         self.model_layer_max = None
-        for n, layer in enumerate(self.model):
+        for layer in self.model:
             if layer.bbox_model:
                 if self.model_layer_min is None:
-                    self.model_layer_min = n
-                self.model_layer_max = n
-
+                    self.model_layer_min = layer.number
+                self.model_layer_max = layer.number
 
         LOG.info(f"Loaded {len(self.model)} layers, ({self.model_layer_max - self.model_layer_min + 1} containing model).")
         if PROFILE:
