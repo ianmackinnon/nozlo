@@ -699,7 +699,7 @@ void main() {
         return model or None
 
 
-    def load_model(self, gcode_path):
+    def load_model(self, gcode_path, cache=True):
 
         if PROFILE:
             LOG.debug("load model start")
@@ -717,24 +717,25 @@ void main() {
         )
 
         self.model = None
-        if model_cache_path.exists():
-            cache_mtime = model_cache_path.stat().st_mtime
-            gcode_mtime = gcode_path.stat().st_mtime
-            if cache_mtime >= gcode_mtime:
-                try:
-                    cache_start = time.time()
-                    self.model = self.load_model_cache(model_cache_path)
-                    cache_duration = time.time() - cache_start
-                except Exception as e:
-                    raise e
-                    LOG.error(e)
-            else:
-                LOG.debug(f"Cache {cache_mtime} is older than G-code {gcode_mtime}.")
+        if cache:
+            if model_cache_path.exists():
+                cache_mtime = model_cache_path.stat().st_mtime
+                gcode_mtime = gcode_path.stat().st_mtime
+                if cache_mtime >= gcode_mtime:
+                    try:
+                        cache_start = time.time()
+                        self.model = self.load_model_cache(model_cache_path)
+                        cache_duration = time.time() - cache_start
+                    except Exception as e:
+                        raise e
+                        LOG.error(e)
+                if PROFILE:
+                    LOG.debug(
+                        f"Read from cache in {cache_duration:0.2f}: `{model_cache_path}`")
+                else:
+                    LOG.debug(f"Cache {cache_mtime} is older than G-code {gcode_mtime}.")
 
-        if self.model is not None:
-            if PROFILE:
-                LOG.debug(f"Read from cache in {cache_duration:0.2f}: `{model_cache_path}`")
-        else:
+        if self.model is None:
             with gcode_path.open() as fp:
                 gcode_start = time.time()
                 self.model = Parser().parse(fp)
@@ -758,7 +759,7 @@ void main() {
         self.model_layer_max = None
         for n, layer in enumerate(self.model):
             if layer.bbox_model:
-                if self.model_layer_min == None:
+                if self.model_layer_min is None:
                     self.model_layer_min = n
                 self.model_layer_max = n
 
@@ -767,12 +768,16 @@ void main() {
         if PROFILE:
             LOG.debug(f"load model end {time.time() - profile_start:0.2f}")
 
-        config = self.load_config()
-        key = str(self.model_path)
-        state = config["models"].get(key, None)
+        state = None
+        if cache:
+            config = self.load_config()
+            key = str(self.model_path)
+            state = config["models"].get(key, None)
+
         if state:
             self.set_state(state)
         else:
+            self.update_model_draw(layer=SpecialLayer.LAST)
             self.frame_visible_model()
 
 
