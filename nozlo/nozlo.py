@@ -462,7 +462,7 @@ void main() {
         try:
             self.display()
         except KeyboardInterrupt:
-            GLUT.glutLeaveMainLoop()
+            self.quit()
 
 
     def update_cursor(self, x, y):
@@ -472,7 +472,7 @@ void main() {
 
     def keyboard(self, key, x, y):
         if ord(key) == 27 or key == b'q':
-            GLUT.glutLeaveMainLoop()
+            self.quit()
 
         if key == b'a':
             self.frame_reference()
@@ -918,6 +918,11 @@ void main() {
         config["models"][key] = self.state
         self.save_config(config)
         self.last_save_state = self.state
+
+
+    def quit(self):
+        self.save_state()
+        GLUT.glutLeaveMainLoop()
 
 
     def run(self):
