@@ -13,12 +13,14 @@
 
 import time
 import math
+import shutil
 import logging
 import colorsys
 from enum import IntEnum
 from typing import Union
 from pathlib import Path
 from hashlib import sha1
+from tempfile import NamedTemporaryFile
 
 import appdirs
 import numpy as np
@@ -903,9 +905,11 @@ void main() {
         if config is None:
             config = self.default_config()
 
-        with self.config_path.open("w") as fp:
-            yaml.dump(config, fp)
-            LOG.debug(f"Saved config `{self.config_path}`")
+        with NamedTemporaryFile("w", suffix=".conf", delete=False) as temp:
+            yaml.dump(config, temp)
+
+        shutil.move(temp.name, self.config_path)
+        LOG.debug(f"Saved config `{self.config_path}`")
 
 
     def save_state(self):
