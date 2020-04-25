@@ -59,6 +59,9 @@ class Nozlo():
     high_feedrate = 100 * 60
 
     up_vector = np.array([0, 0, 1], dtype="float32")
+    default_yaw = 45
+    default_pitch = 30
+    scroll_factor = 1 / 0.9
 
     def __init__(self):
         # Internal
@@ -115,8 +118,8 @@ class Nozlo():
         # Display
 
         self.aim = np.array([0, 0, 0], dtype="float32")
-        self.yaw = 45
-        self.pitch = 30
+        self.yaw = self.default_yaw
+        self.pitch = self.default_pitch
         self.distance = 45
         self.ortho = False
 
@@ -328,8 +331,20 @@ void main() {
         GL.glMatrixMode(GL.GL_MODELVIEW)
         GL.glLoadIdentity()
         up2 = self.up_vector
-        if not self.angle(self.up_vector, self.camera - self.aim):
-            up2 = np.array([0, 1, 0])
+        angle = self.angle(self.up_vector, self.camera - self.aim)
+        if angle == 0:
+            up2 = np.array([
+                -math.cos(math.radians(self.yaw)),
+                math.sin(math.radians(self.yaw)),
+                0
+            ])
+        if angle == math.pi:
+            up2 = np.array([
+                math.cos(math.radians(self.yaw)),
+                -math.sin(math.radians(self.yaw)),
+                0
+            ])
+
         GLU.gluLookAt(
             self.camera[0], self.camera[1], self.camera[2],
             self.aim[0], self.aim[1], self.aim[2],
@@ -494,6 +509,43 @@ void main() {
         if key == b's':
             self.update_model_draw(single=not self.draw_single_layer)
 
+
+        if key == b'h':
+            self.pitch = 0
+            self.yaw = 180
+            self.update_camera_position()
+        if key == b'j':
+            self.pitch = 0
+            self.yaw = 90
+            self.update_camera_position()
+        if key == b'k':
+            self.pitch = 0
+            self.yaw = 0
+            self.update_camera_position()
+        if key == b'l':
+            self.pitch = 0
+            self.yaw = -90
+            self.update_camera_position()
+
+        if key == b'u':
+            self.pitch = -90
+            self.update_camera_position()
+        if key == b'i':
+            self.pitch = 90
+            self.update_camera_position()
+
+        if key == b'y':
+            self.yaw = self.default_yaw
+            self.pitch = self.default_pitch
+            self.update_camera_position()
+
+        if key == b'-':
+            self.distance *= pow(self.scroll_factor, 1)
+            self.update_camera_position()
+        if key == b'=':
+            self.distance *= pow(self.scroll_factor, -1)
+            self.update_camera_position()
+
         self.update_cursor(x, y)
         GLUT.glutPostRedisplay()
 
@@ -590,16 +642,13 @@ void main() {
         dolly = horiz * dolly_horiz + vert * dolly_vert
         self.aim += dolly * self.distance * 0.002
 
-        if scroll < 0:
-            self.distance *= 0.9
-        if scroll > 0:
-            self.distance /= 0.9
+        self.distance *= pow(self.scroll_factor, scroll)
 
         if yaw:
             self.yaw += yaw
         if pitch:
             self.pitch += pitch
-            limit = 90 * 0.999
+            limit = 90
             self.pitch = float(np.clip(self.pitch, -limit, limit))
 
         self.update_camera_position()
