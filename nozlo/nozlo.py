@@ -54,6 +54,8 @@ class Nozlo():
 
     reference_color = (0.3, 0.3, 0.3)
     background_color = (0.18, 0.18, 0.18)
+    model_color_value = 0.6
+    move_color_value = 0.25
     high_feedrate = 100 * 60
 
     up_vector = np.array([0, 0, 1], dtype="float32")
@@ -216,9 +218,17 @@ void main() {
 
 
     @staticmethod
-    def hue(value, max_value):
-        t = value / max_value if max_value else 0
-        return 0.8 * (1 - t)
+    def heat_color(heat, saturation=0.8, value=0.6):
+        hue = (4 - 5 * heat) / 6
+        color = np.array(colorsys.hls_to_rgb(hue, 0.5, 1))
+        mag = np.linalg.norm(np.array(color)) - 0.35
+
+        color = np.array(colorsys.hls_to_rgb(hue, value, saturation))
+        color *= pow(mag, -1)
+
+        color = tuple(color.tolist())
+
+        return color
 
 
     def add_lines_model(self, line_p, line_c):
@@ -239,10 +249,9 @@ void main() {
                 line_p += [segment.start[0], segment.start[1], segment.start[2]]
                 line_p += [segment.end[0], segment.end[1], segment.end[2]]
 
-                color = colorsys.hsv_to_rgb(
-                    self.hue(segment.feedrate, self.max_feedrate),
-                    1,
-                    0.8 if segment.width else 0.5
+                color = self.heat_color(
+                    segment.feedrate / self.max_feedrate,
+                    value=self.model_color_value if segment.width else self.move_color_value
                 )
 
                 line_c += color
@@ -419,16 +428,16 @@ void main() {
         for i in range(step):
             t = i / (step - 1)
             value = max_value * (1 - t)
-            hue = self.hue(value, max_value)
             y -= ly
 
-            GL.glColor3fv(colorsys.hsv_to_rgb(hue, 1, 0.8))
+            color = self.heat_color(value / max_value, value=self.model_color_value)
+            GL.glColor3fv(color)
             GL.glBegin(GL.GL_LINES)
             GL.glVertex2f(x1, y + cy * 0.3)
             GL.glVertex2f(x2, y + cy * 0.3)
             GL.glEnd()
 
-            GL.glColor3fv(colorsys.hsv_to_rgb(hue, 0.4, 0.8))
+            GL.glColor3fv(color)
             self.text(x, y, f"{value:9.1f}")
 
         x = margin + cx * 0.5
