@@ -32,6 +32,7 @@ optional arguments:
   --verbose, -v         Print verbose information for debugging.
   --quiet, -q           Suppress warnings.
   --version, -V         show program's version number and exit
+  --no-cache, -C        Bypass model cache and previous settings.
   --layer LAYER, -l LAYER
                         Layer number to display.
   --single, -s          Show only the single current layer.
@@ -62,9 +63,20 @@ Keyboard
 -   **End**: toggle between last model layer and first movement layer
 -   **Up**: go up a layer
 -   **Down**: go down a layer
+-   **S**: toggle showing single layer
+
 -   **F**: frame model in camera
 -   **A**: frame reference geometry (eg. build surface) in camera
--   **S**: toggle showing single layer
+-   **I**: point camera at top of model (towards negative Z)
+-   **H**: point camera at left of model (towards positive X)
+-   **J**: point camera at front of model (towards positive Y)
+-   **K**: point camera at right of model (towards negative X)
+-   **L**: point camera at back of model (towards negative Y)
+-   **U**: point camera at bottom of model (towards positive Z)
+-   **Y**: reset camera to point diagonally at model
+-   **-**: zoom out
+-   **=**: zoom in
+
 -   **O**: toggle orthographic/perspective projection
 
 -   **Q**/**Escape**: Quit
