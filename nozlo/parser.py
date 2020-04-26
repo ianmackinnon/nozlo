@@ -38,7 +38,7 @@ class Segment:
     G-code line segment
     """
 
-    struct_format: ClassVar[str] = "fff fff fffff f"
+    struct_format: ClassVar[str] = "fff fff fffff ff"
 
     start: Tuple[float, float, float]
     end: Tuple[float, float, float]
@@ -50,6 +50,7 @@ class Segment:
     fan_speed: float = 0
 
     duration: float = 0
+    bandwidth: float = 0
 
 
     def pack(self):
@@ -71,6 +72,7 @@ class Segment:
             self.fan_speed,
 
             self.duration,
+            self.bandwidth,
         )
 
     @classmethod
@@ -92,6 +94,7 @@ class Segment:
             fan_speed,
 
             duration,
+            bandwidth,
         ) = segment_data
 
         return cls(
@@ -105,6 +108,7 @@ class Segment:
             fan_speed=fan_speed,
 
             duration=duration,
+            bandwidth=bandwidth,
         )
 
 
@@ -206,6 +210,7 @@ class Print:
         max_tool_temp = None
         max_bed_temp = None
         max_fan_speed = None
+        max_bandwidth = None
 
         total_duration = 0
 
@@ -225,12 +230,14 @@ class Print:
                 max_tool_temp = segment.tool_temp
                 max_bed_temp = segment.bed_temp
                 max_fan_speed = segment.fan_speed
+                max_bandwidth = segment.bandwidth
             else:
                 max_width = max(max_width, segment.width)
                 max_feedrate = max(max_feedrate, segment.feedrate)
                 max_tool_temp = max(max_tool_temp, segment.tool_temp)
                 max_bed_temp = max(max_bed_temp, segment.bed_temp)
                 max_fan_speed = max(max_fan_speed, segment.fan_speed)
+                max_bandwidth = max(max_width, segment.bandwidth)
 
             total_duration += segment.duration
 
@@ -245,6 +252,7 @@ class Print:
             fan_speed=max_fan_speed,
 
             duration=total_duration,
+            bandwidth=max_bandwidth,
         )
 
 
@@ -356,7 +364,7 @@ class Model(Print):
     G-code model
     """
 
-    version = 1
+    version = 2
     struct_format = "II"
 
 
@@ -543,6 +551,7 @@ class Parser():
                 width = distance_e / distance_p if distance_p else 0
 
                 duration = distance_p / self.feedrate if self.feedrate else 0
+                bandwidth = len(line) / duration if duration else 0
 
                 model.layers[-1].segments.append(Segment(
                     start=start_p,
@@ -553,6 +562,7 @@ class Parser():
                     bed_temp=self.bed_temp,
                     fan_speed=self.fan_speed,
                     duration=duration,
+                    bandwidth=bandwidth,
                 ))
 
             elif command == "G21":
@@ -591,7 +601,7 @@ class Parser():
                     raise NotImplementedError(f"{command}: {values}")
             elif command == "M106":
                 if "S" in values:
-                    self.fan_speed = float(values.pop("S"))
+                    self.fan_speed = 100 * float(values.pop("S")) / 256
                 if values:
                     raise NotImplementedError(f"106: {values}")
             elif command == "M107":

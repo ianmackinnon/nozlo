@@ -17,7 +17,7 @@ import logging
 import argparse
 from pathlib import Path
 
-from nozlo.nozlo import Nozlo, SpecialLayer
+from nozlo.nozlo import CHANNELS, Nozlo, SpecialLayer
 from nozlo import __version__
 
 
@@ -71,6 +71,12 @@ def main():
         help="Bypass model cache and previous settings.")
 
     parser.add_argument(
+        "--channel", "-c",
+        choices=CHANNELS,
+        default="feedrate",
+        help="Channel to display.")
+
+    parser.add_argument(
         "--layer", "-l",
         action=LayerAction,
         help="Layer number to display, from 0 to n-1, or `first` or `last` to indicate the first layer containing the model or last layer.")
@@ -121,6 +127,7 @@ def main():
 
     app = Nozlo()
     app.load_model(args.gcode, cache=(not args.no_cache))
+    app.channel = args.channel
 
     if args.layer:
         app.update_model_draw(layer=args.layer)

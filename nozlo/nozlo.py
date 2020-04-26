@@ -45,6 +45,29 @@ UPDATE_DELAY_SECONDS = 1
 
 POSITION_VECTOR_SIZE = 3
 
+CHANNELS = {
+    "feedrate": {
+        "label": "Feedrate (mm/s)",
+        "increment": 50,
+    },
+    "bandwidth": {
+        "label": "Bandwidth (B/s)",
+        "increment": 5,
+    },
+    "fan_speed": {
+        "label": "Fan speed (%)",
+        "increment": 100,
+    },
+    "tool_temp": {
+        "label": "Tool temp. (°C)",
+        "increment": 50,
+    },
+    "bed_temp": {
+        "label": "Bed temp. (°C)",
+        "increment": 50,
+    },
+}
+
 
 
 class SpecialLayer(IntEnum):
@@ -60,12 +83,13 @@ class Nozlo():
     background_color = (0.18, 0.18, 0.18)
     model_color_value = 0.6
     move_color_value = 0.25
-    high_feedrate = 100
 
     up_vector = np.array([0, 0, 1], dtype="float32")
     default_yaw = 45
     default_pitch = 30
     scroll_factor = 1 / 0.9
+
+    channels = CHANNELS
 
     def __init__(self):
         # Internal
@@ -117,7 +141,6 @@ class Nozlo():
         # Model
 
         self.model = None
-        self.max_feedrate = 0
 
         # Display
 
@@ -129,6 +152,8 @@ class Nozlo():
 
         self.layer: Union[int, SpecialLayer] = 0
         self.draw_single_layer = False
+
+        self.channel = list(self.channels.keys())[0]
 
         # Initialise
 
@@ -238,26 +263,25 @@ void main() {
         return color
 
 
+    def max_channel_value(self):
+        max_value = getattr(self.model.max_segment, self.channel)
+        increment = self.channels[self.channel]["increment"]
+        return math.ceil(max_value / increment) * increment
+
+
     def add_lines_model(self, line_p, line_c):
         self.model_layer_chunks = []
 
-        self.max_feedrate = 0
-        for layer in self.model:
-            for segment in layer.segments:
-                self.max_feedrate = max(self.max_feedrate, segment.feedrate)
-
-        increment = 50
-        self.max_feedrate = math.ceil(self.max_feedrate / increment) * increment
+        max_value = self.max_channel_value()
 
         for layer in self.model:
             layer_chunk_start = self.line_buffer_length
             for segment in layer.segments:
-
                 line_p += [segment.start[0], segment.start[1], segment.start[2]]
                 line_p += [segment.end[0], segment.end[1], segment.end[2]]
 
                 color = self.heat_color(
-                    segment.feedrate / self.max_feedrate,
+                    getattr(segment, self.channel) / max_value,
                     value=self.model_color_value if segment.width else self.move_color_value
                 )
 
@@ -315,7 +339,21 @@ void main() {
         GLUT.glutPostRedisplay()
 
 
+    def clear(self):
+        GL.glClearColor(*self.background_color, 0.0)
+        GL.glClear(
+            GL.GL_COLOR_BUFFER_BIT |
+            GL.GL_DEPTH_BUFFER_BIT
+        )
+
+
     def render_3d_lines(self):
+
+        # Options
+
+        GL.glEnable(GL.GL_DEPTH_TEST)
+        GL.glEnable(GL.GL_MULTISAMPLE)
+        GL.glDepthMask(True)
 
         # Projection
 
@@ -366,20 +404,6 @@ void main() {
             self.modelview_matrix_uniform, 1, GL.GL_FALSE,
             GL.glGetFloatv(GL.GL_MODELVIEW_MATRIX))
 
-        # Options
-
-        GL.glEnable(GL.GL_DEPTH_TEST)
-        GL.glEnable(GL.GL_MULTISAMPLE)
-        GL.glDepthMask(True)
-
-        # Background
-
-        GL.glClearColor(*self.background_color, 0.0)
-        GL.glClear(
-            GL.GL_COLOR_BUFFER_BIT |
-            GL.GL_DEPTH_BUFFER_BIT
-        )
-
         # Draw Layers
 
         GL.glLineWidth(1.0)
@@ -410,6 +434,61 @@ void main() {
             GLUT.glutBitmapCharacter(GLUT.GLUT_BITMAP_9_BY_15, ord(ch))
 
 
+    def show_loading_screen(self):
+        # Projection
+
+        GL.glMatrixMode(GL.GL_PROJECTION)
+        GL.glLoadIdentity()
+        GLU.gluOrtho2D(0, self.width, 0, self.height)
+
+        # Camera
+
+        GL.glMatrixMode(GL.GL_MODELVIEW)
+        GL.glLoadIdentity()
+
+        GL.glDisable(GL.GL_DEPTH_TEST)
+
+        GL.glEnable(GL.GL_BLEND)
+
+        cx = 9
+        cy = 15
+        ly = int(cy * 1.25)
+
+        message = f"Loading: {self.channels[self.channel]['label']}"
+        width = cx * len(message)
+
+        x = self.width / 2 - width / 2
+        y = ly * 2.5
+        margin = 12
+
+        GL.glColor3f(0.12, 0.12, 0.12)
+
+        x1 = x - 2
+        y1 = y - 3
+        x2 = x1 + width
+        y2 = y1 + cy
+        x0 = x1 - margin
+        y0 = y1 - margin / 2
+        x3 = x2 + margin
+        y3 = y2 + margin / 2
+
+        GL.glBegin(GL.GL_POLYGON)
+        GL.glVertex2f(x0, y1)
+        GL.glVertex2f(x1, y0)
+        GL.glVertex2f(x2, y0)
+        GL.glVertex2f(x3, y1)
+        GL.glVertex2f(x3, y2)
+        GL.glVertex2f(x2, y3)
+        GL.glVertex2f(x1, y3)
+        GL.glVertex2f(x0, y2)
+        GL.glEnd()
+
+        GL.glColor4f(0.8, 0.8, 0.8, 1)
+        self.text(x, y, message)
+
+        GLUT.glutSwapBuffers()
+
+
     def render_2d_hud(self):
         # Projection
 
@@ -437,13 +516,16 @@ void main() {
         x1 = self.width - margin - cx * 9.5
         x2 = self.width - margin - cx * 6.5
 
-        GL.glLineWidth(1.0)
-
-        GL.glColor4f(0.8, 0.8, 0.8, 1)
-        self.text(x, y, "Feedrate ")
-
         step = 6
-        max_value = self.max_feedrate
+        label = self.channels[self.channel]["label"].rjust(15)
+        max_value = self.max_channel_value()
+
+        GL.glLineWidth(1.0)
+        GL.glColor4f(0.8, 0.8, 0.8, 1)
+        x = self.width - margin - cx * 15.5
+        self.text(x, y, label)
+        x = self.width - margin - cx * 9.5
+
         for i in range(step):
             t = i / (step - 1)
             value = max_value * (1 - t)
@@ -485,6 +567,7 @@ void main() {
             LOG.debug("display start")
             profile_start = time.time()
 
+        self.clear()
         self.render_3d_lines()
         self.render_2d_hud()
 
@@ -506,6 +589,14 @@ void main() {
         self.cursor[1] = y
 
 
+    def set_channel(self, channel):
+        if self.channel != channel:
+            self.channel = channel
+            self.show_loading_screen()
+            self.init_line_buffer()
+            self.load_line_buffer()
+
+
     def keyboard(self, key, x, y):
         if ord(key) == 27 or key == b'q':
             self.quit()
@@ -521,6 +612,16 @@ void main() {
         if key == b's':
             self.update_model_draw(single=not self.draw_single_layer)
 
+        if key == b'1':
+            self.set_channel("feedrate")
+        if key == b'2':
+            self.set_channel("bandwidth")
+        if key == b'3':
+            self.set_channel("fan_speed")
+        if key == b'4':
+            self.set_channel("tool_temp")
+        if key == b'5':
+            self.set_channel("bed_temp")
 
         if key == b'h':
             self.pitch = 0
@@ -1012,6 +1113,9 @@ void main() {
         self.window = GLUT.glutCreateWindow(self.title)
 
         self.init_program()
+
+        self.clear()
+        self.show_loading_screen()
         self.init_line_buffer()
         self.load_line_buffer()
 
