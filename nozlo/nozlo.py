@@ -11,11 +11,13 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import re
 import time
 import math
 import shutil
 import logging
 import colorsys
+import datetime
 from enum import IntEnum
 from typing import Union
 from pathlib import Path
@@ -58,7 +60,7 @@ class Nozlo():
     background_color = (0.18, 0.18, 0.18)
     model_color_value = 0.6
     move_color_value = 0.25
-    high_feedrate = 100 * 60
+    high_feedrate = 100
 
     up_vector = np.array([0, 0, 1], dtype="float32")
     default_yaw = 45
@@ -244,7 +246,7 @@ void main() {
             for segment in layer.segments:
                 self.max_feedrate = max(self.max_feedrate, segment.feedrate)
 
-        increment = 50 * 60
+        increment = 50
         self.max_feedrate = math.ceil(self.max_feedrate / increment) * increment
 
         for layer in self.model:
@@ -441,7 +443,7 @@ void main() {
         self.text(x, y, "Feedrate ")
 
         step = 6
-        max_value = self.max_feedrate / 60
+        max_value = self.max_feedrate
         for i in range(step):
             t = i / (step - 1)
             value = max_value * (1 - t)
@@ -462,12 +464,20 @@ void main() {
 
         GL.glColor4f(0.8, 0.8, 0.8, 1)
         self.text(x, y, f"Layer:{self.draw_layer_max:3d}")
-        y -= ly
         layer = self.model[self.draw_layer_max]
+        duration = 0
+        for layer in self.model_visible_layers():
+            duration += layer.max_segment.duration
+
+        y -= ly
         if layer.segments:
             self.text(x, y, f"Z:{layer.z:7.2f}")
-        else:
-            self.text(x, y, f"Z:   none")
+
+        y -= ly
+        duration = re.compile(r"^[0:]{,3}").sub("", str(
+            datetime.timedelta(seconds=round(duration))
+        ))
+        self.text(x, y, f"T:{duration.rjust(7)}")
 
 
     def display(self, profile=None):
@@ -531,9 +541,11 @@ void main() {
 
         if key == b'u':
             self.pitch = -90
+            self.yaw = 90
             self.update_camera_position()
         if key == b'i':
             self.pitch = 90
+            self.yaw = 90
             self.update_camera_position()
 
         if key == b'y':

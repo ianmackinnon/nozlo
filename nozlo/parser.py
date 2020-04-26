@@ -23,6 +23,8 @@ import numpy as np
 
 LOG = logging.getLogger("parser")
 
+FEEDRATE_UNIT = 60  # G-code feedrate is in units per minute
+
 
 
 class ParserVersionException(Exception):
@@ -36,15 +38,18 @@ class Segment:
     G-code line segment
     """
 
-    struct_format: ClassVar[str] = "fff fff f f f f f"
+    struct_format: ClassVar[str] = "fff fff fffff f"
 
     start: Tuple[float, float, float]
     end: Tuple[float, float, float]
+
     width: float = 0
     feedrate: float = 0
     tool_temp: float = 0
     bed_temp: float = 0
     fan_speed: float = 0
+
+    duration: float = 0
 
 
     def pack(self):
@@ -64,6 +69,8 @@ class Segment:
             self.tool_temp,
             self.bed_temp,
             self.fan_speed,
+
+            self.duration,
         )
 
     @classmethod
@@ -83,16 +90,21 @@ class Segment:
             tool_temp,
             bed_temp,
             fan_speed,
+
+            duration,
         ) = segment_data
 
         return cls(
             start=[start_x, start_y, start_z],
             end=[end_x, end_y, end_z],
+
             width=width,
             feedrate=feedrate,
             tool_temp=tool_temp,
             bed_temp=bed_temp,
             fan_speed=fan_speed,
+
+            duration=duration,
         )
 
 
@@ -195,6 +207,8 @@ class Print:
         max_bed_temp = None
         max_fan_speed = None
 
+        total_duration = 0
+
         self.bbox_model = Bbox()
         self.bbox_total = Bbox()
 
@@ -218,14 +232,19 @@ class Print:
                 max_bed_temp = max(max_bed_temp, segment.bed_temp)
                 max_fan_speed = max(max_fan_speed, segment.fan_speed)
 
+            total_duration += segment.duration
+
         self.max_segment = Segment(
             start=[0, 0, 0],
             end=[0, 0, 0],
+
             width=max_width,
             feedrate=max_feedrate,
             tool_temp=max_tool_temp,
             bed_temp=max_bed_temp,
             fan_speed=max_fan_speed,
+
+            duration=total_duration,
         )
 
 
@@ -337,7 +356,7 @@ class Model(Print):
     G-code model
     """
 
-    version = 0
+    version = 1
     struct_format = "II"
 
 
@@ -432,6 +451,7 @@ class Parser():
         self.tool_temp = 0
         self.bed_temp = 0
         self.fan_speed = 0
+        self.feedrate_multiplier = 1
 
 
     @staticmethod
@@ -500,7 +520,8 @@ class Parser():
                     self.extrusion = self.extrusion * self.relative + e_value
 
                 if "F" in values:
-                    self.feedrate = float(values.pop("F"))
+                    self.feedrate = \
+                        float(values.pop("F")) * self.feedrate_multiplier / FEEDRATE_UNIT
 
                 if values:
                     raise NotImplementedError(f"G0: {values}")
@@ -521,6 +542,8 @@ class Parser():
                 distance_e = end_e - start_e
                 width = distance_e / distance_p if distance_p else 0
 
+                duration = distance_p / self.feedrate if self.feedrate else 0
+
                 model.layers[-1].segments.append(Segment(
                     start=start_p,
                     end=end_p,
@@ -529,6 +552,7 @@ class Parser():
                     tool_temp=self.tool_temp,
                     bed_temp=self.bed_temp,
                     fan_speed=self.fan_speed,
+                    duration=duration,
                 ))
 
             elif command == "G21":
@@ -580,6 +604,11 @@ class Parser():
                 LOG.debug(f"Ignore adjust acceleration: {command} {values}")
             elif command == "M204":
                 LOG.debug(f"Ignore adjust acceleration: {command} {values}")
+            elif command == "M220":
+                if "S" in values:
+                    self.feedrate_multiplier = float(values.pop("S")) / 100
+                if values:
+                    raise NotImplementedError(f"{command}: {values}")
             else:
                 LOG.debug(f"{n}: Ignoring {line}")
 
