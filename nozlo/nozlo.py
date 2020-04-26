@@ -32,7 +32,7 @@ import yaml
 
 from nozlo.parser import \
     ParserVersionException, \
-    Parser, Model, Layer, Bbox
+    Parser, Model, Bbox
 
 
 
@@ -44,6 +44,7 @@ UPDATE_DELAY_SECONDS = 1
 
 
 POSITION_VECTOR_SIZE = 3
+VERTEX_SIZE_BYTES = 4
 
 CHANNELS = {
     "feedrate": {
@@ -51,8 +52,8 @@ CHANNELS = {
         "increment": 50,
     },
     "bandwidth": {
-        "label": "Bandwidth (B/s)",
-        "increment": 5,
+        "label": "Bandwidth (KB/s)",
+        "increment": 25,
     },
     "fan_speed": {
         "label": "Fan speed (%)",
@@ -88,6 +89,7 @@ class Nozlo():
     default_yaw = 45
     default_pitch = 30
     scroll_factor = 1 / 0.9
+    heat_lut_size = 256
 
     channels = CHANNELS
 
@@ -133,6 +135,16 @@ class Nozlo():
         self.state = None
         self.last_save_state = None
         self.last_update_time = None
+
+        self.model_channel_max = {}
+        self.model_channel_buffer = {}
+
+        self.heat_lut_model = []
+        self.heat_lut_move = []
+        for i in range(self.heat_lut_size):
+            value = i / (self.heat_lut_size - 1)
+            self.heat_lut_model.append(self.heat_color(value, self.model_color_value))
+            self.heat_lut_move.append(self.heat_color(value, self.move_color_value))
 
         # Reference
 
@@ -263,30 +275,34 @@ void main() {
         return color
 
 
-    def max_channel_value(self):
-        max_value = getattr(self.model.max_segment, self.channel)
-        increment = self.channels[self.channel]["increment"]
+    def max_channel_value(self, channel):
+        max_value = getattr(self.model.max_segment, channel)
+        increment = self.channels[channel]["increment"]
         return math.ceil(max_value / increment) * increment
 
 
-    def add_lines_model(self, line_p, line_c):
+    def add_lines_model(self, line_p):
         self.model_layer_chunks = []
 
-        max_value = self.max_channel_value()
+        for channel in self.channels:
+            self.model_channel_max[channel] = self.max_channel_value(channel)
+            self.model_channel_buffer[channel] = []
 
+        profile_start = time.time()
         for layer in self.model:
             layer_chunk_start = self.line_buffer_length
-            for segment in layer.segments:
+            for segment in layer:
                 line_p += [segment.start[0], segment.start[1], segment.start[2]]
                 line_p += [segment.end[0], segment.end[1], segment.end[2]]
 
-                color = self.heat_color(
-                    getattr(segment, self.channel) / max_value,
-                    value=self.model_color_value if segment.width else self.move_color_value
-                )
-
-                line_c += color
-                line_c += color
+                for channel in self.channels:
+                    value_float = getattr(segment, channel) / self.model_channel_max[channel]
+                    value_index = math.floor(value_float * (self.heat_lut_size - 1))
+                    color = (
+                        self.heat_lut_model[value_index] if segment.width else
+                        self.heat_lut_move[value_index])
+                    self.model_channel_buffer[channel] += color
+                    self.model_channel_buffer[channel] += color
 
                 self.line_buffer_length += 2
 
@@ -295,7 +311,27 @@ void main() {
                 self.line_buffer_length
             ])
 
+        LOG.debug(f"add_lines_model iterate {time.time() - profile_start:0.2f}")
+
         self.update_model_draw()
+
+
+    def update_model_color(self):
+        line_c = []
+
+        profile_start = time.time()
+        line_c = self.model_channel_buffer[self.channel]
+        LOG.debug(f"update model color iterate {time.time() - profile_start:0.2f}")
+
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_color)
+        profile_start = time.time()
+        GL.glBufferSubData(
+            GL.GL_ARRAY_BUFFER,
+            self.model_layer_chunks[0][0] * POSITION_VECTOR_SIZE * VERTEX_SIZE_BYTES,
+            np.array(line_c, dtype='float32'),
+        )
+        LOG.debug(
+            f"update model color GL.glBufferSubData {time.time() - profile_start:0.2f}")
 
 
     def init_line_buffer(self):
@@ -313,24 +349,31 @@ void main() {
         self.line_buffer_length = 0
 
         self.add_lines_reference(line_p, line_c)
-        self.add_lines_model(line_p, line_c)
+
+        self.add_lines_model(line_p)
+        line_c += self.model_channel_buffer[self.channel]
 
         GL.glBindVertexArray(self.line_array)
 
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_position)
+        profile_start = time.time()
         GL.glBufferData(
             GL.GL_ARRAY_BUFFER,
             np.array(line_p, dtype='float32'),
             GL.GL_STATIC_DRAW
         )
+        LOG.debug(f"load_line_buffer GL.glBufferData {time.time() - profile_start:0.2f}")
+
         GL.glVertexAttribPointer(0, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
 
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_color)
+        profile_start = time.time()
         GL.glBufferData(
             GL.GL_ARRAY_BUFFER,
             np.array(line_c, dtype='float32'),
             GL.GL_STATIC_DRAW
         )
+        LOG.debug(f"load_line_buffer GL.glBufferData {time.time() - profile_start:0.2f}")
         GL.glVertexAttribPointer(1, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
 
         duration = time.time() - start
@@ -517,12 +560,12 @@ void main() {
         x2 = self.width - margin - cx * 6.5
 
         step = 6
-        label = self.channels[self.channel]["label"].rjust(15)
-        max_value = self.max_channel_value()
+        label = self.channels[self.channel]["label"].rjust(16)
+        max_value = self.model_channel_max[self.channel]
 
         GL.glLineWidth(1.0)
         GL.glColor4f(0.8, 0.8, 0.8, 1)
-        x = self.width - margin - cx * 15.5
+        x = self.width - margin - cx * 16.5
         self.text(x, y, label)
         x = self.width - margin - cx * 9.5
 
@@ -590,11 +633,10 @@ void main() {
 
 
     def set_channel(self, channel):
-        if self.channel != channel:
-            self.channel = channel
-            self.show_loading_screen()
-            self.init_line_buffer()
-            self.load_line_buffer()
+        # if self.channel != channel:
+        self.channel = channel
+        self.show_loading_screen()
+        self.update_model_color()
 
 
     def keyboard(self, key, x, y):

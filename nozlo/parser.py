@@ -24,7 +24,7 @@ import numpy as np
 LOG = logging.getLogger("parser")
 
 FEEDRATE_UNIT = 60  # G-code feedrate is in units per minute
-
+MIN_DURATION = 0.001
 
 
 class ParserVersionException(Exception):
@@ -237,7 +237,7 @@ class Print:
                 max_tool_temp = max(max_tool_temp, segment.tool_temp)
                 max_bed_temp = max(max_bed_temp, segment.bed_temp)
                 max_fan_speed = max(max_fan_speed, segment.fan_speed)
-                max_bandwidth = max(max_width, segment.bandwidth)
+                max_bandwidth = max(max_bandwidth, segment.bandwidth)
 
             total_duration += segment.duration
 
@@ -312,6 +312,19 @@ class Layer(Print):
         super().__init__()
 
 
+    def __len__(self):
+        return len(self.segments)
+
+
+    def __iter__(self):
+        for segment in self.segments:
+            yield segment
+
+
+    def __getitem__(self, key):
+        return self.segments[key]
+
+
     def iter_segments(self):
         for segment in self.segments:
             # Extrusion ends in build volume:
@@ -364,7 +377,7 @@ class Model(Print):
     G-code model
     """
 
-    version = 2
+    version = 3
     struct_format = "II"
 
 
@@ -550,8 +563,15 @@ class Parser():
                 distance_e = end_e - start_e
                 width = distance_e / distance_p if distance_p else 0
 
-                duration = distance_p / self.feedrate if self.feedrate else 0
-                bandwidth = len(line) / duration if duration else 0
+                if distance_p:
+                    duration = distance_p / self.feedrate if self.feedrate else 0
+                elif distance_e:
+                    duration = distance_e / self.feedrate if self.feedrate else 0
+                else:
+                    duration = 0
+                if duration < MIN_DURATION:
+                    duration = 0
+                bandwidth = len(line) / duration / 1024 if duration else 0
 
                 model.layers[-1].segments.append(Segment(
                     start=start_p,
