@@ -72,7 +72,7 @@ CHANNELS = {
         "increment": 50,
     },
 }
-
+DEFAULT_CHANNEL = "feedrate"
 
 
 class SpecialLayer(IntEnum):
@@ -169,7 +169,7 @@ class Nozlo():
         self.layer: Union[int, SpecialLayer] = 0
         self.draw_single_layer = False
 
-        self.channel = list(self.channels.keys())[0]
+        self.channel = DEFAULT_CHANNEL
 
         # Initialise
 
@@ -536,7 +536,7 @@ void main() {
         cy = 15
         ly = int(cy * 1.25)
 
-        message = f"Loading: {self.channels[self.channel]['label']}"
+        message = f"Analysing model..."
         width = cx * len(message)
 
         x = self.width / 2 - width / 2
@@ -672,10 +672,10 @@ void main() {
 
 
     def set_channel(self, channel):
-        # if self.channel != channel:
-        self.channel = channel
-        self.show_loading_screen()
-        self.update_model_color()
+        if self.channel != channel:
+            self.channel = channel
+            self.update_model_color()
+            self.update_state()
 
 
     def keyboard(self, key, x, y):
@@ -1105,16 +1105,44 @@ void main() {
 
 
     def set_state(self, state) -> None:
-        self.aim[0] = state["aim"][0]
-        self.aim[1] = state["aim"][1]
-        self.aim[2] = state["aim"][2]
-        self.yaw = state["yaw"]
-        self.pitch = state["pitch"]
-        self.distance = state["distance"]
-        self.ortho = state["ortho"]
+        try:
+            self.aim[0] = state["aim"][0]
+            self.aim[1] = state["aim"][1]
+            self.aim[2] = state["aim"][2]
+        except KeyError:
+            pass
 
-        self.layer = int(state["layer"])
-        self.draw_single_layer = state["single"]
+        try:
+            self.yaw = state["yaw"]
+        except KeyError:
+            pass
+
+        try:
+            self.pitch = state["pitch"]
+        except KeyError:
+            pass
+        try:
+            self.distance = state["distance"]
+        except KeyError:
+            pass
+        try:
+            self.ortho = state["ortho"]
+        except KeyError:
+            pass
+
+        try:
+            self.layer = int(state["layer"])
+        except KeyError:
+            pass
+        try:
+            self.draw_single_layer = state["single"]
+        except KeyError:
+            pass
+
+        try:
+            self.channel = state["channel"]
+        except KeyError:
+            pass
 
         self.update_model_draw()
         self.update_camera_position()
@@ -1129,6 +1157,7 @@ void main() {
             "ortho": self.ortho,
             "layer": int(self.layer),
             "single": self.draw_single_layer,
+            "channel": self.channel,
         }
         self.last_update_time = time.time()
 

@@ -17,7 +17,7 @@ import logging
 import argparse
 from pathlib import Path
 
-from nozlo.nozlo import CHANNELS, Nozlo, SpecialLayer
+from nozlo.nozlo import CHANNELS, DEFAULT_CHANNEL, Nozlo, SpecialLayer
 from nozlo import __version__
 
 
@@ -73,8 +73,8 @@ def main():
     parser.add_argument(
         "--channel", "-c",
         choices=CHANNELS,
-        default="feedrate",
-        help="Channel to display.")
+        default=None,
+        help=f"Channel to display. Default is `{DEFAULT_CHANNEL}`.")
 
     parser.add_argument(
         "--layer", "-l",
@@ -127,7 +127,9 @@ def main():
 
     app = Nozlo()
     app.load_model(args.gcode, cache=(not args.no_cache))
-    app.channel = args.channel
+
+    if args.channel:
+        app.channel = args.channel
 
     if args.layer:
         app.update_model_draw(layer=args.layer)
