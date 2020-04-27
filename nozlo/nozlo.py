@@ -421,6 +421,27 @@ void main() {
         )
 
 
+    @property
+    def up_safe(self):
+        up = self.up_vector
+
+        angle = self.angle(self.up_vector, self.camera - self.aim)
+        if angle == 0:
+            up = np.array([
+                -math.cos(math.radians(self.yaw)),
+                math.sin(math.radians(self.yaw)),
+                0
+            ])
+        elif angle == math.pi:
+            up = np.array([
+                math.cos(math.radians(self.yaw)),
+                -math.sin(math.radians(self.yaw)),
+                0
+            ])
+
+        return up
+
+
     def render_3d_lines(self):
 
         # Options
@@ -446,25 +467,12 @@ void main() {
 
         GL.glMatrixMode(GL.GL_MODELVIEW)
         GL.glLoadIdentity()
-        up2 = self.up_vector
-        angle = self.angle(self.up_vector, self.camera - self.aim)
-        if angle == 0:
-            up2 = np.array([
-                -math.cos(math.radians(self.yaw)),
-                math.sin(math.radians(self.yaw)),
-                0
-            ])
-        if angle == math.pi:
-            up2 = np.array([
-                math.cos(math.radians(self.yaw)),
-                -math.sin(math.radians(self.yaw)),
-                0
-            ])
 
+        up = self.up_safe
         GLU.gluLookAt(
             self.camera[0], self.camera[1], self.camera[2],
             self.aim[0], self.aim[1], self.aim[2],
-            up2[0], up2[1], up2[2],
+            up[0], up[1], up[2],
         )
 
         # Shader
@@ -827,7 +835,8 @@ void main() {
             scroll=0
     ):
         camera = self.camera - self.aim
-        horiz = self.unit(np.cross(self.up_vector, camera))
+        up = self.up_safe
+        horiz = self.unit(np.cross(self.up_safe, camera))
         vert = self.unit(np.cross(camera, horiz))
         dolly = horiz * dolly_horiz + vert * dolly_vert
         self.aim += dolly * self.distance * 0.002
