@@ -36,7 +36,7 @@ optional arguments:
   --quiet, -q           Suppress warnings.
   --version, -V         show program's version number and exit
   --no-cache, -C        Bypass model cache and previous settings.
-  --channel {feedrate,bandwidth,fan_speed,tool_temp,bed_temp}, -c {feedrate,bandwidth,fan_speed,tool_temp,bed_temp}
+  --channel {progress,feedrate,bandwidth,fan_speed,tool_temp,bed_temp}, -c {progress,feedrate,bandwidth,fan_speed,tool_temp,bed_temp}
                         Channel to display.
   --layer LAYER, -l LAYER
                         Layer number to display, from 0 to n-1, or `first` or
@@ -66,6 +66,7 @@ Mouse:
 
 Keyboard
 
+-   **0**: Show progress
 -   **1**: Show feedrate
 -   **2**: Show G-code bandwidth
 -   **3**: Show fan speed

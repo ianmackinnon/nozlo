@@ -47,6 +47,10 @@ POSITION_VECTOR_SIZE = 3
 VERTEX_SIZE_BYTES = 4
 
 CHANNELS = {
+    "progress": {
+        "label": "Progress (%)",
+        "max": 100,
+    },
     "feedrate": {
         "label": "Feedrate (mm/s)",
         "increment": 50,
@@ -57,7 +61,7 @@ CHANNELS = {
     },
     "fan_speed": {
         "label": "Fan speed (%)",
-        "increment": 100,
+        "max": 100,
     },
     "tool_temp": {
         "label": "Tool temp. (°C)",
@@ -276,6 +280,10 @@ void main() {
 
 
     def max_channel_value(self, channel):
+        max_value = self.channels[channel].get("max", None)
+        if max_value is not None:
+            return max_value
+
         max_value = getattr(self.model.max_segment, channel)
         increment = self.channels[channel]["increment"]
         return math.ceil(max_value / increment) * increment
@@ -288,6 +296,14 @@ void main() {
             self.model_channel_max[channel] = self.max_channel_value(channel)
             self.model_channel_buffer[channel] = []
 
+        def add_color(channel, value, model, n=1):
+            value_index = math.floor(value * (self.heat_lut_size - 1))
+            color = (
+                self.heat_lut_model[value_index] if model else
+                self.heat_lut_move[value_index])
+            for _i in range(n):
+                self.model_channel_buffer[channel] += color
+
         profile_start = time.time()
         for layer in self.model:
             layer_chunk_start = self.line_buffer_length
@@ -296,13 +312,28 @@ void main() {
                 line_p += [segment.end[0], segment.end[1], segment.end[2]]
 
                 for channel in self.channels:
-                    value_float = getattr(segment, channel) / self.model_channel_max[channel]
-                    value_index = math.floor(value_float * (self.heat_lut_size - 1))
-                    color = (
-                        self.heat_lut_model[value_index] if segment.width else
-                        self.heat_lut_move[value_index])
-                    self.model_channel_buffer[channel] += color
-                    self.model_channel_buffer[channel] += color
+                    if channel == "progress":
+                        add_color(
+                            channel,
+                            (segment.start_time - layer.max_segment.start_time) *
+                            1 / layer.max_segment.duration,
+                            segment.width
+                        )
+                        add_color(
+                            channel,
+                            (segment.start_time + segment.duration -
+                             layer.max_segment.start_time) *
+                            1 / layer.max_segment.duration,
+                            segment.width
+                        )
+                    else:
+                        add_color(
+                            channel,
+                            getattr(segment, channel) /
+                            self.model_channel_max[channel],
+                            segment.width,
+                            n=2
+                        )
 
                 self.line_buffer_length += 2
 
@@ -654,6 +685,8 @@ void main() {
         if key == b's':
             self.update_model_draw(single=not self.draw_single_layer)
 
+        if key == b'0':
+            self.set_channel("progress")
         if key == b'1':
             self.set_channel("feedrate")
         if key == b'2':
@@ -959,8 +992,10 @@ void main() {
                 LOG.debug(f"Read from gcode in {gcode_duration:0.2f}: `{gcode_path}`")
 
             calc_start = time.time()
+            layer_start_time = 0
             for layer in self.model:
-                layer.calc_bounds()
+                layer.calc_bounds(start_time=layer_start_time)
+                layer_start_time += layer.max_segment.duration
 
             self.model.calc_bounds()
             calc_duration = time.time() - calc_start

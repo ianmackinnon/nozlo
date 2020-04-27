@@ -38,7 +38,7 @@ class Segment:
     G-code line segment
     """
 
-    struct_format: ClassVar[str] = "fff fff fffff ff"
+    struct_format: ClassVar[str] = "fff fff fffff fff"
 
     start: Tuple[float, float, float]
     end: Tuple[float, float, float]
@@ -49,6 +49,7 @@ class Segment:
     bed_temp: float = 0
     fan_speed: float = 0
 
+    start_time: float = 0
     duration: float = 0
     bandwidth: float = 0
 
@@ -71,9 +72,11 @@ class Segment:
             self.bed_temp,
             self.fan_speed,
 
+            self.start_time,
             self.duration,
             self.bandwidth,
         )
+
 
     @classmethod
     def unpack(cls, buf: bytes):
@@ -93,6 +96,7 @@ class Segment:
             bed_temp,
             fan_speed,
 
+            start_time,
             duration,
             bandwidth,
         ) = segment_data
@@ -107,6 +111,7 @@ class Segment:
             bed_temp=bed_temp,
             fan_speed=fan_speed,
 
+            start_time=start_time,
             duration=duration,
             bandwidth=bandwidth,
         )
@@ -204,7 +209,7 @@ class Print:
         self.max_segment = None
 
 
-    def calc_bounds(self):
+    def calc_bounds(self, start_time=0):
         max_width = None
         max_feedrate = None
         max_tool_temp = None
@@ -239,6 +244,7 @@ class Print:
                 max_fan_speed = max(max_fan_speed, segment.fan_speed)
                 max_bandwidth = max(max_bandwidth, segment.bandwidth)
 
+            segment.start_time = start_time + total_duration
             total_duration += segment.duration
 
         self.max_segment = Segment(
@@ -251,6 +257,7 @@ class Print:
             bed_temp=max_bed_temp,
             fan_speed=max_fan_speed,
 
+            start_time=start_time,
             duration=total_duration,
             bandwidth=max_bandwidth,
         )
@@ -377,7 +384,7 @@ class Model(Print):
     G-code model
     """
 
-    version = 3
+    version = 4
     struct_format = "II"
 
 
@@ -447,13 +454,6 @@ class Model(Print):
         Print.unpack_from(model, in_)
 
         return model
-
-
-
-
-
-
-
 
 
 
