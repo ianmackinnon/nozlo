@@ -2,9 +2,9 @@
 
 G-code viewer for visualising feedrate, bandwidth, fan speed, and temperature.
 
-![Nozlo 3DBenchy feedrate screenshot](nozlo-3dbench-feedrate.png)
-![Nozlo 3DBenchy bandwidth screenshot](nozlo-3dbench-bandwidth-single-ortho.png)
-![Nozlo 3DBenchy fan speed screenshot](nozlo-3dbench-fan-speed.png)
+![Nozlo 3DBenchy feedrate screenshot](nozlo-3dbenchy-feedrate.png)
+![Nozlo 3DBenchy bandwidth screenshot](nozlo-3dbenchy-bandwidth-single-ortho.png)
+![Nozlo 3DBenchy fan speed screenshot](nozlo-3dbenchy-fan-speed.png)
 
 
 ## Installation

@@ -168,6 +168,8 @@ class Nozlo():
 
         self.layer: Union[int, SpecialLayer] = 0
         self.draw_single_layer = False
+        self.explode = False
+        self.explode_scale = 1
 
         self.channel = DEFAULT_CHANNEL
 
@@ -196,6 +198,30 @@ class Nozlo():
             cls.unit(v1),
             cls.unit(v2),
         ), -1.0, 1.0))
+
+
+    @staticmethod
+    def heat_color(heat, saturation=0.8, value=0.6):
+        hue = (4 - 5 * heat) / 6
+        color = np.array(colorsys.hls_to_rgb(hue, 0.5, 1))
+        mag = np.linalg.norm(np.array(color)) - 0.35
+
+        color = np.array(colorsys.hls_to_rgb(hue, value, saturation))
+        color *= pow(mag, -1)
+
+        color = tuple(color.tolist())
+
+        return color
+
+
+    def max_channel_value(self, channel):
+        max_value = self.channels[channel].get("max", None)
+        if max_value is not None:
+            return max_value
+
+        max_value = getattr(self.model.max_segment, channel)
+        increment = self.channels[channel]["increment"]
+        return math.ceil(max_value / increment) * increment
 
 
     def init_files(self):
@@ -265,88 +291,6 @@ void main() {
         self.reference_array_chunk = [chunk_start, self.line_buffer_length]
 
 
-    @staticmethod
-    def heat_color(heat, saturation=0.8, value=0.6):
-        hue = (4 - 5 * heat) / 6
-        color = np.array(colorsys.hls_to_rgb(hue, 0.5, 1))
-        mag = np.linalg.norm(np.array(color)) - 0.35
-
-        color = np.array(colorsys.hls_to_rgb(hue, value, saturation))
-        color *= pow(mag, -1)
-
-        color = tuple(color.tolist())
-
-        return color
-
-
-    def max_channel_value(self, channel):
-        max_value = self.channels[channel].get("max", None)
-        if max_value is not None:
-            return max_value
-
-        max_value = getattr(self.model.max_segment, channel)
-        increment = self.channels[channel]["increment"]
-        return math.ceil(max_value / increment) * increment
-
-
-    def add_lines_model(self, line_p):
-        self.model_layer_chunks = []
-
-        for channel in self.channels:
-            self.model_channel_max[channel] = self.max_channel_value(channel)
-            self.model_channel_buffer[channel] = []
-
-        def add_color(channel, value, model, n=1):
-            value_index = math.floor(value * (self.heat_lut_size - 1))
-            color = (
-                self.heat_lut_model[value_index] if model else
-                self.heat_lut_move[value_index])
-            for _i in range(n):
-                self.model_channel_buffer[channel] += color
-
-        profile_start = time.time()
-        for layer in self.model:
-            layer_chunk_start = self.line_buffer_length
-            for segment in layer:
-                line_p += [segment.start[0], segment.start[1], segment.start[2]]
-                line_p += [segment.end[0], segment.end[1], segment.end[2]]
-
-                for channel in self.channels:
-                    if channel == "progress":
-                        add_color(
-                            channel,
-                            (segment.start_time - layer.max_segment.start_time) *
-                            1 / layer.max_segment.duration,
-                            segment.width
-                        )
-                        add_color(
-                            channel,
-                            (segment.start_time + segment.duration -
-                             layer.max_segment.start_time) *
-                            1 / layer.max_segment.duration,
-                            segment.width
-                        )
-                    else:
-                        add_color(
-                            channel,
-                            getattr(segment, channel) /
-                            self.model_channel_max[channel],
-                            segment.width,
-                            n=2
-                        )
-
-                self.line_buffer_length += 2
-
-            self.model_layer_chunks.append([
-                layer_chunk_start,
-                self.line_buffer_length
-            ])
-
-        LOG.debug(f"add_lines_model iterate {time.time() - profile_start:0.2f}")
-
-        self.update_model_draw()
-
-
     def update_model_color(self):
         line_c = []
 
@@ -365,6 +309,35 @@ void main() {
             f"update model color GL.glBufferSubData {time.time() - profile_start:0.2f}")
 
 
+    def update_model_position(
+            self,
+    ):
+        line_p = []
+
+        profile_start = time.time()
+        for layer in self.model:
+            for segment in layer:
+                if self.explode:
+                    line_p += [segment.start[0], segment.start[1],
+                               segment.start_time * self.explode_scale]
+                    line_p += [segment.end[0], segment.end[1],
+                               (segment.start_time + segment.duration) * self.explode_scale]
+                else:
+                    line_p += [segment.start[0], segment.start[1], segment.start[2]]
+                    line_p += [segment.end[0], segment.end[1], segment.end[2]]
+        LOG.debug(f"update model position iterate {len(line_p)} {time.time() - profile_start:0.2f}")
+
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_position)
+        profile_start = time.time()
+        GL.glBufferSubData(
+            GL.GL_ARRAY_BUFFER,
+            self.model_layer_chunks[0][0] * POSITION_VECTOR_SIZE * VERTEX_SIZE_BYTES,
+            np.array(line_p, dtype='float32'),
+        )
+        LOG.debug(
+            f"update model position GL.glBufferSubData {time.time() - profile_start:0.2f}")
+
+
     def init_line_buffer(self):
         self.line_array = GL.glGenVertexArrays(1)
         self.line_buffer_position = GL.glGenBuffers(1)
@@ -381,7 +354,25 @@ void main() {
 
         self.add_lines_reference(line_p, line_c)
 
-        self.add_lines_model(line_p)
+        profile_start = time.time()
+        for layer in self.model:
+            layer_chunk_start = self.line_buffer_length
+
+            self.line_buffer_length += 2 * len(layer)
+
+            self.model_layer_chunks.append([
+                layer_chunk_start,
+                self.line_buffer_length
+            ])
+        LOG.debug(f"analyse model layer sizes {time.time() - profile_start:0.2f}")
+
+
+        model_lines_buffer_length = (
+            self.model_layer_chunks[-1][1] -
+            self.model_layer_chunks[0][0]
+        )
+
+        line_p += [0, 0, 0] * model_lines_buffer_length
         line_c += self.model_channel_buffer[self.channel]
 
         GL.glBindVertexArray(self.line_array)
@@ -672,10 +663,39 @@ void main() {
 
 
     def set_channel(self, channel):
-        if self.channel != channel:
-            self.channel = channel
-            self.update_model_color()
-            self.update_state()
+        if self.channel == channel:
+            return
+
+        self.channel = channel
+        self.update_model_color()
+        self.update_state()
+
+
+    def current_layer(self):
+        if self.layer == SpecialLayer.FIRST:
+            return self.model[0]
+        elif self.layer == SpecialLayer.LAST:
+            return self.model[-1]
+        return self.model[self.layer]
+
+
+    def set_explode(self, explode: bool):
+        if self.explode is explode:
+            return
+
+        ref_layer = self.current_layer()
+        ref_z0 = ref_layer.z
+        ref_z1 = ref_layer.max_segment.start_time * self.explode_scale
+        ref_zd = ref_z1 - ref_z0
+
+        if explode:
+            self.aim[2] += ref_zd
+        else:
+            self.aim[2] -= ref_zd
+
+        self.explode = explode
+        self.update_model_position()
+        self.update_camera_position()
 
 
     def keyboard(self, key, x, y):
@@ -692,6 +712,8 @@ void main() {
 
         if key == b's':
             self.update_model_draw(single=not self.draw_single_layer)
+        if key == b'x':
+            self.set_explode(not self.explode)
 
         if key == b'0':
             self.set_channel("progress")
@@ -808,8 +830,20 @@ void main() {
                 bbox.update(layer.bbox_total.min)
                 bbox.update(layer.bbox_total.max)
 
+        if self.explode:
+            bbox.min[2] = (
+                self.model[self.draw_layer_min].max_segment.start_time
+            ) * self.explode_scale
+            bbox.max[2] = (
+                self.model[self.draw_layer_max].max_segment.duration +
+                self.model[self.draw_layer_max].max_segment.start_time
+            ) * self.explode_scale
+
         self.aim = bbox.center
         self.distance = bbox.size
+
+        if self.explode:
+            self.distance *= 1.2
 
         self.update_camera_position()
 
@@ -1033,11 +1067,60 @@ void main() {
             key = str(self.model_path)
             state = config["models"].get(key, None)
 
+
+        self.analyse_model()
+        self.update_model_draw()
+
         if state:
             self.set_state(state)
         else:
             self.update_model_draw(layer=SpecialLayer.LAST)
             self.frame_visible_model()
+
+
+    def analyse_model(self):
+        self.model_layer_chunks = []
+
+        for channel in self.channels:
+            self.model_channel_max[channel] = self.max_channel_value(channel)
+            self.model_channel_buffer[channel] = []
+
+        def add_color(channel, value, model, n=1):
+            value_index = math.floor(value * (self.heat_lut_size - 1))
+            color = (
+                self.heat_lut_model[value_index] if model else
+                self.heat_lut_move[value_index])
+            for _i in range(n):
+                self.model_channel_buffer[channel] += color
+
+        profile_start = time.time()
+        for layer in self.model:
+            for segment in layer:
+                for channel in self.channels:
+                    if channel == "progress":
+                        add_color(
+                            channel,
+                            (segment.start_time - layer.max_segment.start_time) *
+                            1 / layer.max_segment.duration,
+                            segment.width
+                        )
+                        add_color(
+                            channel,
+                            (segment.start_time + segment.duration -
+                             layer.max_segment.start_time) *
+                            1 / layer.max_segment.duration,
+                            segment.width
+                        )
+                    else:
+                        add_color(
+                            channel,
+                            getattr(segment, channel) /
+                            self.model_channel_max[channel],
+                            segment.width,
+                            n=2
+                        )
+
+        LOG.debug(f"analyse model {time.time() - profile_start:0.2f}")
 
 
     def load_reference(self):
@@ -1138,6 +1221,14 @@ void main() {
             self.draw_single_layer = state["single"]
         except KeyError:
             pass
+        try:
+            self.explode = state["explode"]
+        except KeyError:
+            pass
+        try:
+            self.explode_scale = state["explode_scale"]
+        except KeyError:
+            pass
 
         try:
             self.channel = state["channel"]
@@ -1157,6 +1248,8 @@ void main() {
             "ortho": self.ortho,
             "layer": int(self.layer),
             "single": self.draw_single_layer,
+            "explode": self.explode,
+            "explode_scale": self.explode_scale,
             "channel": self.channel,
         }
         self.last_update_time = time.time()
@@ -1233,6 +1326,7 @@ void main() {
         self.show_loading_screen()
         self.init_line_buffer()
         self.load_line_buffer()
+        self.update_model_position()
 
         GLUT.glutDisplayFunc(self._display)
         GLUT.glutIdleFunc(self.idle)

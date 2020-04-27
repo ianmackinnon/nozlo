@@ -84,6 +84,10 @@ def main():
         "--single", "-s",
         action="store_true",
         help="Show only the single current layer.")
+    parser.add_argument(
+        "--explode", "-x",
+        action="store_true",
+        help="Show exploded view with time along the Z-axis.")
 
     parser.add_argument(
         "--ortho", "-o",
@@ -152,6 +156,9 @@ def main():
     if args.pitch is not None:
         app.pitch = 0
         app.move_camera(pitch=args.pitch)
+
+    if args.explode:
+        app.set_explode(args.explode)
 
     app.run()
 
