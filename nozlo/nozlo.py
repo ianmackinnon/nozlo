@@ -75,9 +75,142 @@ CHANNELS = {
 DEFAULT_CHANNEL = "feedrate"
 
 
+
+def mag_v3f(v):
+    return np.linalg.norm(v)
+
+
+
+def unit_v3f(v):
+    """
+    Unit vector
+    """
+
+    mag = mag_v3f(v)
+    return v.copy() * (1 / mag if mag else 0)
+
+
+
+def angle_v3f(v1, v2):
+    """
+    Angle between two vectors
+    """
+
+    return np.arccos(np.clip(np.dot(
+        unit_v3f(v1),
+        unit_v3f(v2),
+    ), -1.0, 1.0))
+
+
+
 class SpecialLayer(IntEnum):
     FIRST = -10  # First layer of model
     LAST = -20  # Last layer of model
+
+
+
+class Camera():
+    up_vector = np.array([0, 0, 1], dtype="float32")
+
+    default_yaw = 45
+    default_pitch = 30
+    default_distance = 45
+
+
+    def __init__(self):
+        self.position = np.array([0, 0, 0], dtype="float32")
+        self.aim = np.array([0, 0, 0], dtype="float32")
+
+        self.yaw = self.default_yaw
+        self.pitch = self.default_pitch
+        self.distance = self.default_distance
+
+        self.view_angle = 50
+        self.near_plane = 0.1
+        self.far_plane = 1000
+
+        self.ortho = False
+
+        self.update()
+
+
+    def __repr__(self):
+        return f"<Camera: {self.position} -> {self.aim}>"
+
+
+    def reset_tumble(self):
+        self.yaw = self.default_yaw
+        self.pitch = self.default_pitch
+
+
+    @property
+    def up_safe(self):
+        up = self.up_vector.copy()
+
+        angle = angle_v3f(self.up_vector, self.position - self.aim)
+        if angle == 0:
+            up = np.array([
+                -math.cos(math.radians(self.yaw)),
+                math.sin(math.radians(self.yaw)),
+                0
+            ], dtype="float32")
+        elif angle == math.pi:
+            up = np.array([
+                math.cos(math.radians(self.yaw)),
+                -math.sin(math.radians(self.yaw)),
+                0
+            ], dtype="float32")
+
+        return up
+
+
+    def dolly(self, dx, dy, factor):
+        position = self.position - self.aim
+        horiz = unit_v3f(np.cross(self.up_safe, position))
+        vert = unit_v3f(np.cross(position, horiz))
+        dolly = horiz * dx + vert * dy
+        self.aim += dolly * self.distance * factor
+
+
+    def zoom(self, dz, factor):
+        self.distance *= pow(factor, dz)
+
+
+    def tumble(self, yaw, pitch):
+        if yaw:
+            self.yaw += yaw
+        if pitch:
+            self.pitch += pitch
+            limit = 90
+            self.pitch = float(np.clip(self.pitch, -limit, limit))
+
+
+    def frame(self, bbox):
+        self.aim = bbox.center
+        self.distance = bbox.size
+
+
+    def update(self):
+        yaw = math.radians(self.yaw)
+        pitch = math.radians(self.pitch)
+        sin_pitch = math.sin(pitch)
+        cos_pitch = math.cos(pitch)
+        sin_yaw = math.sin(yaw)
+        cos_yaw = math.cos(yaw)
+
+        position = np.array([1, 0, 0], dtype="float32")
+        position = position.dot(np.array([
+            [cos_pitch, 0, sin_pitch],
+            [0, 1, 0],
+            [-sin_pitch, 0, cos_pitch],
+        ]))
+        position = position.dot(np.array([
+            [cos_yaw, -sin_yaw, 0],
+            [sin_yaw, cos_yaw, 0],
+            [0, 0, 1],
+        ]))
+
+        self.position = self.aim + position * self.distance
 
 
 
@@ -89,9 +222,7 @@ class Nozlo():
     model_color_value = 0.6
     move_color_value = 0.25
 
-    up_vector = np.array([0, 0, 1], dtype="float32")
-    default_yaw = 45
-    default_pitch = 30
+    zoom_factor = 0.002
     scroll_factor = 1 / 0.9
     heat_lut_size = 256
 
@@ -113,11 +244,6 @@ class Nozlo():
         self.height = None
         self.aspect = None
 
-        self.view_angle = 50
-        self.near_plane = 0.1
-        self.far_plane = 1000
-
-        self.camera = np.array([0, 0, 0], dtype="float32")
         self.draw_layer_min: int = 0
         self.draw_layer_max: int = 0
         self.reference_bbox = None
@@ -160,11 +286,7 @@ class Nozlo():
 
         # Display
 
-        self.aim = np.array([0, 0, 0], dtype="float32")
-        self.yaw = self.default_yaw
-        self.pitch = self.default_pitch
-        self.distance = 45
-        self.ortho = False
+        self.camera = Camera()
 
         self.layer: Union[int, SpecialLayer] = 0
         self.draw_single_layer = False
@@ -178,26 +300,6 @@ class Nozlo():
         self.init_files()
 
         self.load_reference()
-
-
-    @staticmethod
-    def unit(v):
-        """
-        Unit vector
-        """
-        mag = np.linalg.norm(v)
-        return v / mag if mag else v * 0
-
-
-    @classmethod
-    def angle(cls, v1, v2):
-        """
-        Angle between two vectors
-        """
-        return np.arccos(np.clip(np.dot(
-            cls.unit(v1),
-            cls.unit(v2),
-        ), -1.0, 1.0))
 
 
     @staticmethod
@@ -412,27 +514,6 @@ void main() {
         )
 
 
-    @property
-    def up_safe(self):
-        up = self.up_vector
-
-        angle = self.angle(self.up_vector, self.camera - self.aim)
-        if angle == 0:
-            up = np.array([
-                -math.cos(math.radians(self.yaw)),
-                math.sin(math.radians(self.yaw)),
-                0
-            ])
-        elif angle == math.pi:
-            up = np.array([
-                math.cos(math.radians(self.yaw)),
-                -math.sin(math.radians(self.yaw)),
-                0
-            ])
-
-        return up
-
-
     def render_3d_lines(self):
 
         # Options
@@ -443,27 +524,30 @@ void main() {
 
         # Projection
 
-        if self.ortho:
+        if self.camera.ortho:
             GL.glMatrixMode(GL.GL_PROJECTION)
             GL.glLoadIdentity()
-            h = self.distance / 2
+            h = self.camera.distance / 2
             w = h * self.aspect
-            GL.glOrtho(-w, w, -h, h, self.near_plane, self.far_plane)
+            GL.glOrtho(
+                -w, w, -h, h,
+                self.camera.near_plane, self.camera.far_plane)
         else:
             GL.glMatrixMode(GL.GL_PROJECTION)
             GL.glLoadIdentity()
-            GLU.gluPerspective(self.view_angle, self.aspect, self.near_plane, self.far_plane)
+            GLU.gluPerspective(
+                self.camera.view_angle, self.aspect,
+                self.camera.near_plane, self.camera.far_plane)
 
         # Camera
 
         GL.glMatrixMode(GL.GL_MODELVIEW)
         GL.glLoadIdentity()
 
-        up = self.up_safe
         GLU.gluLookAt(
-            self.camera[0], self.camera[1], self.camera[2],
-            self.aim[0], self.aim[1], self.aim[2],
-            up[0], up[1], up[2],
+            *tuple(self.camera.position.tolist()),
+            *tuple(self.camera.aim.tolist()),
+            *tuple(self.camera.up_safe.tolist()),
         )
 
         # Shader
@@ -655,6 +739,9 @@ void main() {
             self.display()
         except KeyboardInterrupt:
             self.quit()
+        except Exception as e:
+            self.quit()
+            raise e
 
 
     def update_cursor(self, x, y):
@@ -671,10 +758,43 @@ void main() {
         self.update_state()
 
 
+    def nearest_layer_z(self, z):
+        last_layer = None
+        for layer in self.model:
+            if layer.z == z:
+                return layer.number
+            if layer.z > z:
+                if not layer.number:
+                    return 0
+                dist_below = z - last_layer.z
+                layer_height = layer.z - last_layer.z
+                return last_layer.number + dist_below / layer_height
+            last_layer = layer
+        return last_layer.number
+
+
+    def nearest_layer_duration(self, z):
+        last_layer = None
+        last_layer_z = None
+        for layer in self.model:
+            layer_z = layer.max_segment.start_time * self.explode_scale
+            if layer_z == z:
+                return layer.number
+            if layer_z > z:
+                if not layer.number:
+                    return 0
+                dist_below = z - last_layer_z
+                layer_height = layer_z - last_layer_z
+                return last_layer.number + dist_below / layer_height
+            last_layer = layer
+            last_layer_z = layer_z
+        return last_layer.number
+
+
     def current_layer(self):
         if self.layer == SpecialLayer.FIRST:
             return self.model[0]
-        elif self.layer == SpecialLayer.LAST:
+        if self.layer == SpecialLayer.LAST:
             return self.model[-1]
         return self.model[self.layer]
 
@@ -689,9 +809,9 @@ void main() {
         ref_zd = ref_z1 - ref_z0
 
         if explode:
-            self.aim[2] += ref_zd
+            self.camera.aim[2] += ref_zd
         else:
-            self.aim[2] -= ref_zd
+            self.camera.aim[2] -= ref_zd
 
         self.explode = explode
         self.update_model_position()
@@ -707,7 +827,7 @@ void main() {
         if key == b'f':
             self.frame_visible_model()
         if key == b'o':
-            self.ortho = not self.ortho
+            self.camera.ortho = not self.camera.ortho
             self.update_state()
 
         if key == b's':
@@ -729,41 +849,40 @@ void main() {
             self.set_channel("bed_temp")
 
         if key == b'h':
-            self.pitch = 0
-            self.yaw = 180
+            self.camera.pitch = 0
+            self.camera.yaw = 180
             self.update_camera_position()
         if key == b'j':
-            self.pitch = 0
-            self.yaw = 90
+            self.camera.pitch = 0
+            self.camera.yaw = 90
             self.update_camera_position()
         if key == b'k':
-            self.pitch = 0
-            self.yaw = 0
+            self.camera.pitch = 0
+            self.camera.yaw = 0
             self.update_camera_position()
         if key == b'l':
-            self.pitch = 0
-            self.yaw = -90
+            self.camera.pitch = 0
+            self.camera.yaw = -90
             self.update_camera_position()
 
         if key == b'u':
-            self.pitch = -90
-            self.yaw = 90
+            self.camera.pitch = -90
+            self.camera.yaw = 90
             self.update_camera_position()
         if key == b'i':
-            self.pitch = 90
-            self.yaw = 90
+            self.camera.pitch = 90
+            self.camera.yaw = 90
             self.update_camera_position()
 
         if key == b'y':
-            self.yaw = self.default_yaw
-            self.pitch = self.default_pitch
+            self.camera.reset_tumble()
             self.update_camera_position()
 
         if key == b'-':
-            self.distance *= pow(self.scroll_factor, 1)
+            self.camera.zoom(1, self.scroll_factor)
             self.update_camera_position()
         if key == b'=':
-            self.distance *= pow(self.scroll_factor, -1)
+            self.camera.zoom(-1, self.scroll_factor)
             self.update_camera_position()
 
         self.update_cursor(x, y)
@@ -789,22 +908,7 @@ void main() {
 
 
     def update_camera_position(self):
-        yaw = math.radians(self.yaw)
-        pitch = math.radians(self.pitch)
-
-        camera = np.array([1, 0, 0], dtype="float32")
-        camera = camera.dot(np.array([
-            [math.cos(pitch), 0, math.sin(pitch)],
-            [0, 1, 0],
-            [-math.sin(pitch), 0, math.cos(pitch)],
-        ]))
-        camera = camera.dot(np.array([
-            [math.cos(yaw), -math.sin(yaw), 0],
-            [math.sin(yaw), math.cos(yaw), 0],
-            [0, 0, 1],
-        ]))
-
-        self.camera = self.aim + camera * self.distance
+        self.camera.update()
         self.update_state()
 
 
@@ -839,24 +943,21 @@ void main() {
                 self.model[self.draw_layer_max].max_segment.start_time
             ) * self.explode_scale
 
-        self.aim = bbox.center
-        self.distance = bbox.size
+        self.camera.frame(bbox)
 
         if self.explode:
-            self.distance *= 1.2
+            self.camera.distance *= 1.2
 
         self.update_camera_position()
 
 
     def frame_reference(self):
-        self.aim = self.reference_bbox.center
-        self.distance = self.reference_bbox.size
-
+        self.camera.frame(self.reference_bbox)
         self.update_camera_position()
 
 
     def move_aim(self, aim):
-        self.aim = np.array(aim, dtype="float32")
+        self.camera.aim = np.array(aim, dtype="float32")
         self.update_camera_position()
 
 
@@ -868,21 +969,9 @@ void main() {
             dolly_vert=0,
             scroll=0
     ):
-        camera = self.camera - self.aim
-        up = self.up_safe
-        horiz = self.unit(np.cross(self.up_safe, camera))
-        vert = self.unit(np.cross(camera, horiz))
-        dolly = horiz * dolly_horiz + vert * dolly_vert
-        self.aim += dolly * self.distance * 0.002
-
-        self.distance *= pow(self.scroll_factor, scroll)
-
-        if yaw:
-            self.yaw += yaw
-        if pitch:
-            self.pitch += pitch
-            limit = 90
-            self.pitch = float(np.clip(self.pitch, -limit, limit))
+        self.camera.dolly(dolly_horiz, dolly_vert, self.zoom_factor)
+        self.camera.zoom(scroll, self.scroll_factor)
+        self.camera.tumble(yaw, pitch)
 
         self.update_camera_position()
 
@@ -1189,27 +1278,27 @@ void main() {
 
     def set_state(self, state) -> None:
         try:
-            self.aim[0] = state["aim"][0]
-            self.aim[1] = state["aim"][1]
-            self.aim[2] = state["aim"][2]
+            self.camera.aim[0] = state["aim"][0]
+            self.camera.aim[1] = state["aim"][1]
+            self.camera.aim[2] = state["aim"][2]
         except KeyError:
             pass
 
         try:
-            self.yaw = state["yaw"]
+            self.camera.yaw = state["yaw"]
         except KeyError:
             pass
 
         try:
-            self.pitch = state["pitch"]
+            self.camera.pitch = state["pitch"]
         except KeyError:
             pass
         try:
-            self.distance = state["distance"]
+            self.camera.distance = state["distance"]
         except KeyError:
             pass
         try:
-            self.ortho = state["ortho"]
+            self.camera.ortho = state["ortho"]
         except KeyError:
             pass
 
@@ -1241,11 +1330,11 @@ void main() {
 
     def update_state(self) -> None:
         self.state = {
-            "aim": [float(v) for v in self.aim],
-            "yaw": self.yaw,
-            "pitch": self.pitch,
-            "distance": self.distance,
-            "ortho": self.ortho,
+            "aim": [float(v) for v in self.camera.aim],
+            "yaw": self.camera.yaw,
+            "pitch": self.camera.pitch,
+            "distance": self.camera.distance,
+            "ortho": self.camera.ortho,
             "layer": int(self.layer),
             "single": self.draw_single_layer,
             "explode": self.explode,
