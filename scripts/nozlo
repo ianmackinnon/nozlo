@@ -87,7 +87,7 @@ def main():
     parser.add_argument(
         "--explode", "-x",
         action="store_true",
-        help="Show exploded view with time along the Z-axis.")
+        help="Explode current layer progress along the Z-axis.")
 
     parser.add_argument(
         "--ortho", "-o",

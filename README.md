@@ -3,6 +3,7 @@
 G-code viewer for visualising feedrate, bandwidth, fan speed, and temperature.
 
 ![Nozlo 3DBenchy feedrate screenshot](nozlo-3dbenchy-feedrate.png)
+![Nozlo 3DBenchy progress screenshot](nozlo-3dbenchy-progress.gif)
 ![Nozlo 3DBenchy bandwidth screenshot](nozlo-3dbenchy-bandwidth-single-ortho.png)
 ![Nozlo 3DBenchy fan speed screenshot](nozlo-3dbenchy-fan-speed.png)
 
@@ -43,6 +44,7 @@ optional arguments:
                         `last` to indicate the first layer containing the
                         model or last layer.
   --single, -s          Show only the single current layer.
+  --explode, -x         Explode current layer progress along the Z-axis.
   --ortho, -o           Use orthographic projection.
   --aim AIM AIM AIM, -a AIM AIM AIM
                         Aim coordinates for the camera.
@@ -77,7 +79,10 @@ Keyboard
 -   **End**: toggle between last model layer and first movement layer
 -   **Up**: go up a layer
 -   **Down**: go down a layer
+-   **Page Up**: go up 20% of the model
+-   **Page Down**: go down 20% of the model
 -   **S**: toggle showing single layer
+-   **X**: toggle exploded layer progress view
 
 -   **F**: frame model in camera
 -   **A**: frame reference geometry (eg. build surface) in camera
@@ -90,6 +95,9 @@ Keyboard
 -   **Y**: reset camera to point diagonally at model
 -   **-**: zoom out
 -   **=**: zoom in
+
+-   **,**: decrease exploded view scale
+-   **.**: increase exploded view scale
 
 -   **O**: toggle orthographic/perspective projection
 

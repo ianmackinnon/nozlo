@@ -263,8 +263,8 @@ class Nozlo():
         self.window = None
 
         self.program = None
-        self.projection_matrix_uniform = None
-        self.modelview_matrix_uniform = None
+        self.uniform_projection_matrix = None
+        self.uniform_modelview_matrix = None
 
         self.cursor = np.array([0, 0], dtype="int")
         self.button = {v: None for v in range(5)}
@@ -284,7 +284,13 @@ class Nozlo():
         self.model_layer_max = None
 
         self.line_buffer_position = None
+        self.line_buffer_progress = None
         self.line_buffer_color = None
+        self.locations = {
+            "vertex_position": 0,
+            "vertex_progress": 1,
+            "vertex_color": 2,
+        }
         self.line_array = None
 
         self.line_buffer_length = None
@@ -321,7 +327,12 @@ class Nozlo():
         self.layer: Union[int, SpecialLayer] = 0
         self.draw_single_layer = False
         self.explode = False
+        self.explode_start = 0;
+        self.explode_end = 0;
         self.explode_scale = 1
+
+        self.explode_scale_current = self.explode_scale
+        self.explode_scale_target = self.explode_scale
 
         self.channel = DEFAULT_CHANNEL
 
@@ -380,21 +391,42 @@ class Nozlo():
 
 
     def init_program(self):
-        vert = """\
+        vert = f"""\
 #version 330 core
 
 uniform mat4 modelview_matrix;
 uniform mat4 projection_matrix;
+uniform float explode_start;
+uniform float explode_end;
+uniform float explode_scale;
 
-layout(location = 0) in vec3 vertex_position;
-layout(location = 1) in vec3 vertex_color;
+layout (location = {self.locations['vertex_position']}) in vec3 vertex_position;
+layout (location = {self.locations['vertex_progress']}) in vec3 vertex_progress;
+layout (location = {self.locations['vertex_color']}) in vec3 vertex_color;
 
 out vec3 color;
 
-void main() {
+void main() {{
+  float explode;
+
+explode = 0;
+if (explode_start <= vertex_progress[0] && vertex_progress[0] < explode_end) {{
+    explode += vertex_progress[0] - explode_start;
+}}
+if (explode_end <= vertex_progress[0]) {{
+    explode += explode_end - explode_start;
+}}
+
+
   color = vertex_color;
-  gl_Position = projection_matrix * modelview_matrix * vec4(vertex_position, 1.0);
-}"""
+  gl_Position = projection_matrix * modelview_matrix * vec4(
+    vertex_position[0],
+    vertex_position[1],
+    vertex_position[2] + explode * explode_scale,
+    1.0
+  );
+}}
+"""
 
         frag = """\
 #version 330 core
@@ -412,10 +444,16 @@ void main() {
             compileShader(frag, GL.GL_FRAGMENT_SHADER)
         )
 
-        self.projection_matrix_uniform = GL.glGetUniformLocation(
+        self.uniform_projection_matrix = GL.glGetUniformLocation(
             self.program, 'projection_matrix')
-        self.modelview_matrix_uniform = GL.glGetUniformLocation(
+        self.uniform_modelview_matrix = GL.glGetUniformLocation(
             self.program, "modelview_matrix")
+        self.uniform_explode_start = GL.glGetUniformLocation(
+            self.program, "explode_start")
+        self.uniform_explode_end = GL.glGetUniformLocation(
+            self.program, "explode_end")
+        self.uniform_explode_scale = GL.glGetUniformLocation(
+            self.program, "explode_scale")
 
 
     def add_lines_reference(self, line_p, line_c):
@@ -449,38 +487,11 @@ void main() {
             f"update model color GL.glBufferSubData {time.time() - profile_start:0.2f}")
 
 
-    def update_model_position(
-            self,
-    ):
-        line_p = []
-
-        profile_start = time.time()
-        for layer in self.model:
-            for segment in layer:
-                if self.explode:
-                    line_p += [segment.start[0], segment.start[1],
-                               segment.start_time * self.explode_scale]
-                    line_p += [segment.end[0], segment.end[1],
-                               (segment.start_time + segment.duration) * self.explode_scale]
-                else:
-                    line_p += [segment.start[0], segment.start[1], segment.start[2]]
-                    line_p += [segment.end[0], segment.end[1], segment.end[2]]
-        LOG.debug(f"update model position iterate {len(line_p)} {time.time() - profile_start:0.2f}")
-
-        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_position)
-        profile_start = time.time()
-        GL.glBufferSubData(
-            GL.GL_ARRAY_BUFFER,
-            self.model_layer_chunks[0][0] * POSITION_VECTOR_SIZE * VERTEX_SIZE_BYTES,
-            np.array(line_p, dtype='float32'),
-        )
-        LOG.debug(
-            f"update model position GL.glBufferSubData {time.time() - profile_start:0.2f}")
-
-
     def init_line_buffer(self):
         self.line_array = GL.glGenVertexArrays(1)
+
         self.line_buffer_position = GL.glGenBuffers(1)
+        self.line_buffer_progress = GL.glGenBuffers(1)
         self.line_buffer_color = GL.glGenBuffers(1)
 
 
@@ -489,14 +500,32 @@ void main() {
         start = time.time()
 
         line_p = []
+        line_t = []
         line_c = []
         self.line_buffer_length = 0
 
         self.add_lines_reference(line_p, line_c)
+        line_t += [0, 0, 0] * self.line_buffer_length
+
+        def segment_layer(time_, layer):
+            """
+            Return the layer number plus the fraction of the layer completed.
+            """
+
+            return layer.number + (
+                time_ - layer.max_segment.start_time) / layer.max_segment.duration
 
         profile_start = time.time()
         for layer in self.model:
             layer_chunk_start = self.line_buffer_length
+
+            for segment in layer:
+                line_p += [segment.start[0], segment.start[1], segment.start[2]]
+                line_p += [segment.end[0], segment.end[1], segment.end[2]]
+                line_t += [segment.start_time,
+                           segment_layer(segment.start_time, layer), 0]
+                line_t += [segment.start_time + segment.duration,
+                           segment_layer(segment.start_time + segment.duration, layer), 0]
 
             self.line_buffer_length += 2 * len(layer)
 
@@ -512,31 +541,36 @@ void main() {
             self.model_layer_chunks[0][0]
         )
 
-        line_p += [0, 0, 0] * model_lines_buffer_length
         line_c += self.model_channel_buffer[self.channel]
 
         GL.glBindVertexArray(self.line_array)
 
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_position)
-        profile_start = time.time()
         GL.glBufferData(
             GL.GL_ARRAY_BUFFER,
             np.array(line_p, dtype='float32'),
             GL.GL_STATIC_DRAW
         )
-        LOG.debug(f"load_line_buffer GL.glBufferData {time.time() - profile_start:0.2f}")
+        GL.glVertexAttribPointer(
+            self.locations["vertex_position"], 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
 
-        GL.glVertexAttribPointer(0, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_progress)
+        GL.glBufferData(
+            GL.GL_ARRAY_BUFFER,
+            np.array(line_t, dtype='float32'),
+            GL.GL_STATIC_DRAW
+        )
+        GL.glVertexAttribPointer(
+            self.locations["vertex_progress"], 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
 
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.line_buffer_color)
-        profile_start = time.time()
         GL.glBufferData(
             GL.GL_ARRAY_BUFFER,
             np.array(line_c, dtype='float32'),
             GL.GL_STATIC_DRAW
         )
-        LOG.debug(f"load_line_buffer GL.glBufferData {time.time() - profile_start:0.2f}")
-        GL.glVertexAttribPointer(1, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
+        GL.glVertexAttribPointer(
+            self.locations["vertex_color"], 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
 
         duration = time.time() - start
         LOG.debug(f"load line buffer end {duration:0.2f}")
@@ -549,11 +583,22 @@ void main() {
     def anim_start(self):
         self.anim_t = 1.0
 
+
     def anim_camera(self):
         if self.anim_t:
             self.camera.transition(self.camera_target, self.anim_d)
         else:
             self.camera = self.camera_target.copy()
+
+
+    def anim_explode(self):
+        if self.anim_t:
+            self.explode_scale_current = (
+                self.explode_scale_current * (1 - self.anim_d) +
+                self.explode_scale_target * self.anim_d
+            )
+        else:
+            self.explode_scale_current = self.explode_scale_target
 
 
     # Drawing methods
@@ -607,11 +652,15 @@ void main() {
         GL.glUseProgram(self.program)
 
         GL.glUniformMatrix4fv(
-            self.projection_matrix_uniform, 1, GL.GL_FALSE,
+            self.uniform_projection_matrix, 1, GL.GL_FALSE,
             GL.glGetFloatv(GL.GL_PROJECTION_MATRIX))
         GL.glUniformMatrix4fv(
-            self.modelview_matrix_uniform, 1, GL.GL_FALSE,
+            self.uniform_modelview_matrix, 1, GL.GL_FALSE,
             GL.glGetFloatv(GL.GL_MODELVIEW_MATRIX))
+
+        GL.glUniform1f(self.uniform_explode_start, self.explode_start)
+        GL.glUniform1f(self.uniform_explode_end, self.explode_end)
+        GL.glUniform1f(self.uniform_explode_scale, self.explode_scale_current)
 
         # Draw Layers
 
@@ -619,6 +668,7 @@ void main() {
 
         GL.glEnableVertexAttribArray(0)
         GL.glEnableVertexAttribArray(1)
+        GL.glEnableVertexAttribArray(2)
 
         # Draw reference
         start = self.reference_array_chunk[0]
@@ -800,6 +850,7 @@ void main() {
                 self.update_state()
 
             self.anim_camera()
+            self.anim_explode()
 
 
         self.clear()
@@ -890,25 +941,6 @@ void main() {
         self.update_state()
 
 
-    def set_explode(self, explode: bool):
-        if self.explode is explode:
-            return
-
-        ref_layer = self.current_layer()
-        ref_z0 = ref_layer.z
-        ref_z1 = ref_layer.max_segment.start_time * self.explode_scale
-        ref_zd = ref_z1 - ref_z0
-
-        if explode:
-            self.camera.aim[2] += ref_zd
-        else:
-            self.camera.aim[2] -= ref_zd
-
-        self.explode = explode
-        self.update_model_position()
-        self.update_camera_position()
-
-
     def keyboard(self, key, x, y):
         if ord(key) == 27 or key == b'q':
             self.quit()
@@ -924,7 +956,7 @@ void main() {
         if key == b's':
             self.update_model_draw(single=not self.draw_single_layer)
         if key == b'x':
-            self.set_explode(not self.explode)
+            self.update_model_draw(explode=not self.explode)
 
         if key == b'0':
             self.set_channel("progress")
@@ -970,11 +1002,24 @@ void main() {
             self.anim_start()
 
         if key == b'-':
+            self.explode_scale -= 0.1;
             self.camera.zoom(1, self.scroll_factor)
             self.update_camera_position()
         if key == b'=':
+            self.explode_scale += 0.1;
             self.camera.zoom(-1, self.scroll_factor)
             self.update_camera_position()
+
+        if key == b',':
+            self.explode_scale /= self.scroll_factor
+            self.explode_scale_current = self.explode_scale * self.explode
+            self.explode_scale_target = self.explode_scale_current
+            self.update_model_draw()
+        if key == b'.':
+            self.explode_scale *= self.scroll_factor
+            self.explode_scale_current = self.explode_scale * self.explode
+            self.explode_scale_target = self.explode_scale_current
+            self.update_model_draw()
 
         self.update_cursor(x, y)
         GLUT.glutPostRedisplay()
@@ -993,6 +1038,11 @@ void main() {
             self.update_model_draw(layer=self.draw_layer_max - 1)
         if key == GLUT.GLUT_KEY_UP:
             self.update_model_draw(layer=self.draw_layer_max + 1)
+
+        if key == GLUT.GLUT_KEY_PAGE_DOWN:
+            self.update_model_draw(layer=self.draw_layer_max - len(self.model) // 5)
+        if key == GLUT.GLUT_KEY_PAGE_UP:
+            self.update_model_draw(layer=self.draw_layer_max + len(self.model) // 5)
 
         self.update_cursor(x, y)
         GLUT.glutPostRedisplay()
@@ -1021,17 +1071,12 @@ void main() {
                 bbox.update(layer.bbox_total.max)
 
         if self.explode:
-            bbox.min[2] = (
-                self.model[self.draw_layer_min].max_segment.start_time
-            ) * self.explode_scale
-            bbox.max[2] = (
-                self.model[self.draw_layer_max].max_segment.duration +
-                self.model[self.draw_layer_max].max_segment.start_time
+            bbox.max[2] += (
+                self.explode_end - self.explode_start
             ) * self.explode_scale
 
         self.camera_target.frame(bbox)
-        if self.explode:
-            self.camera_target.distance *= 1.2
+
         if anim:
             self.anim_start()
         else:
@@ -1062,7 +1107,8 @@ void main() {
     def update_model_draw(
             self,
             layer: Union[None, int, SpecialLayer] = None,
-            single: Union[None, bool] = None
+            single: Union[None, bool] = None,
+            explode: Union[None, bool] = None
     ):
         """
         `layer`: absolute layer number or `-1` for last layer.
@@ -1085,13 +1131,24 @@ void main() {
         if single is not None:
             self.draw_single_layer = single
 
+        if explode is not None:
+            if explode != self.explode:
+                self.explode_scale_current = self.explode_scale * self.explode
+                self.explode_scale_target = self.explode_scale * explode
+                self.explode = explode
+                self.frame_visible_model()
+
         self.draw_layer_min = self.draw_layer_max if self.draw_single_layer else 0
 
         if (
                 self.draw_layer_min != draw_layer_min_ or
                 self.draw_layer_max != draw_layer_max_
         ):
+            layer = self.model[self.draw_layer_max]
+            self.explode_start = layer.max_segment.start_time
+            self.explode_end = layer.max_segment.start_time + layer.max_segment.duration
             self.update_state()
+
 
 
     def mouse(self, button, state, x, y):
@@ -1389,6 +1446,9 @@ void main() {
         except KeyError:
             pass
 
+        self.explode_scale_current = self.explode_scale * self.explode
+        self.explode_scale_target = self.explode_scale * self.explode
+
         try:
             self.channel = state["channel"]
         except KeyError:
@@ -1485,7 +1545,6 @@ void main() {
         self.show_loading_screen()
         self.init_line_buffer()
         self.load_line_buffer()
-        self.update_model_position()
 
         GLUT.glutDisplayFunc(self.display)
         GLUT.glutIdleFunc(self.idle)
