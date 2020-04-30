@@ -116,26 +116,52 @@ class Camera():
     default_pitch = 30
     default_distance = 45
 
+    default_ortho = False
 
-    def __init__(self):
+
+    def __init__(self, aim=None, yaw=None, pitch=None, distance=None, ortho=None):
         self.position = np.array([0, 0, 0], dtype="float32")
-        self.aim = np.array([0, 0, 0], dtype="float32")
+        self.aim = np.array([0, 0, 0], dtype="float32") if aim is None else aim
 
-        self.yaw = self.default_yaw
-        self.pitch = self.default_pitch
-        self.distance = self.default_distance
+        self.yaw = self.default_yaw if yaw is None else yaw
+        self.pitch = self.default_pitch if pitch is None else pitch
+        self.distance = self.default_distance if distance is None else distance
 
         self.view_angle = 50
         self.near_plane = 0.1
         self.far_plane = 1000
 
-        self.ortho = False
+        self.ortho = self.default_ortho if ortho is None else ortho
 
         self.update()
 
 
     def __repr__(self):
         return f"<Camera: {self.position} -> {self.aim}>"
+
+
+    def copy(self):
+        return Camera(
+            aim=self.aim.copy(),
+            yaw=self.yaw,
+            pitch=self.pitch,
+            distance=self.distance,
+            ortho=self.ortho,
+        )
+
+
+    def transition(self, other, t):
+        tt = 1 - t
+
+        self.aim[0] = other.aim[0] * t + self.aim[0] * tt
+        self.aim[1] = other.aim[1] * t + self.aim[1] * tt
+        self.aim[2] = other.aim[2] * t + self.aim[2] * tt
+
+        self.yaw = other.yaw * t + self.yaw * tt
+        self.pitch = other.pitch * t + self.pitch * tt
+        self.distance = other.distance * t + self.distance * tt
+
+        self.update()
 
 
     def reset_tumble(self):
@@ -219,12 +245,15 @@ class Nozlo():
 
     reference_color = (0.3, 0.3, 0.3)
     background_color = (0.18, 0.18, 0.18)
-    model_color_value = 0.6
-    move_color_value = 0.25
+    model_color_value: float = 0.6
+    move_color_value: float = 0.25
 
-    zoom_factor = 0.002
-    scroll_factor = 1 / 0.9
-    heat_lut_size = 256
+    zoom_factor: float = 0.002
+    scroll_factor: float = 1 / 0.9
+    heat_lut_size: int = 256
+
+    anim_duration: float = 0.2
+    anim_ease: float = 2
 
     channels = CHANNELS
 
@@ -287,6 +316,7 @@ class Nozlo():
         # Display
 
         self.camera = Camera()
+        self.camera_target = Camera()
 
         self.layer: Union[int, SpecialLayer] = 0
         self.draw_single_layer = False
@@ -294,6 +324,14 @@ class Nozlo():
         self.explode_scale = 1
 
         self.channel = DEFAULT_CHANNEL
+
+        # Animation
+
+        self.clock: Union[float, None] = None
+        self.elapsed: Union[float, None] = None
+        self.anim_t: Union[float, None] = None
+        self.anim_d: Union[float, None] = None
+        self.reference_layer: Union[float, None] = None
 
         # Initialise
 
@@ -505,6 +543,20 @@ void main() {
 
         GLUT.glutPostRedisplay()
 
+
+    # Animation methods
+
+    def anim_start(self):
+        self.anim_t = 1.0
+
+    def anim_camera(self):
+        if self.anim_t:
+            self.camera.transition(self.camera_target, self.anim_d)
+        else:
+            self.camera = self.camera_target.copy()
+
+
+    # Drawing methods
 
     def clear(self):
         GL.glClearColor(*self.background_color, 0.0)
@@ -719,10 +771,36 @@ void main() {
         self.text(x, y, f"T:{duration.rjust(7)}")
 
 
-    def display(self, profile=None):
-        if PROFILE and profile:
-            LOG.debug("display start")
-            profile_start = time.time()
+    # Flow methods
+
+    def tick(self, idle=None):
+        now = time.time()
+        if self.clock is not None:
+            self.elapsed = now - self.clock
+        self.clock = now
+
+        if (
+                idle and
+                self.state and
+                self.state != self.last_save_state and
+                self.last_update_time and
+                self.clock > self.last_update_time + UPDATE_DELAY_SECONDS
+        ):
+            self.save_state()
+
+        if self.elapsed is not None and self.anim_t is not None:
+            last_t = self.anim_t
+            self.anim_t -= self.elapsed / self.anim_duration
+            self.anim_t = max(0, self.anim_t)
+            anim_te = pow(self.anim_t, self.anim_ease)
+            last_te = pow(last_t, self.anim_ease)
+            self.anim_d = (last_te - anim_te) / last_te
+            if self.anim_t == 0:
+                self.anim_t = None
+                self.update_state()
+
+            self.anim_camera()
+
 
         self.clear()
         self.render_3d_lines()
@@ -730,19 +808,26 @@ void main() {
 
         GLUT.glutSwapBuffers()
 
-        if PROFILE and profile:
-            LOG.debug(f"display end {time.time() - profile_start:0.2f}")
 
-
-    def _display(self):
+    def _tick(self, idle=None):
         try:
-            self.display()
+            self.tick(idle=idle)
         except KeyboardInterrupt:
             self.quit()
         except Exception as e:
             self.quit()
             raise e
 
+
+    def idle(self):
+        self._tick(idle=True)
+
+
+    def display(self):
+        self._tick()
+
+
+    # Control methods
 
     def update_cursor(self, x, y):
         self.cursor[0] = x
@@ -799,6 +884,12 @@ void main() {
         return self.model[self.layer]
 
 
+    def update_camera_position(self):
+        self.camera.update()
+        self.camera_target = self.camera.copy()
+        self.update_state()
+
+
     def set_explode(self, explode: bool):
         if self.explode is explode:
             return
@@ -828,7 +919,7 @@ void main() {
             self.frame_visible_model()
         if key == b'o':
             self.camera.ortho = not self.camera.ortho
-            self.update_state()
+            self.update_camera_position()
 
         if key == b's':
             self.update_model_draw(single=not self.draw_single_layer)
@@ -849,34 +940,34 @@ void main() {
             self.set_channel("bed_temp")
 
         if key == b'h':
-            self.camera.pitch = 0
-            self.camera.yaw = 180
-            self.update_camera_position()
+            self.camera_target.pitch = 0
+            self.camera_target.yaw = 180
+            self.anim_start()
         if key == b'j':
-            self.camera.pitch = 0
-            self.camera.yaw = 90
-            self.update_camera_position()
+            self.camera_target.pitch = 0
+            self.camera_target.yaw = 90
+            self.anim_start()
         if key == b'k':
-            self.camera.pitch = 0
-            self.camera.yaw = 0
-            self.update_camera_position()
+            self.camera_target.pitch = 0
+            self.camera_target.yaw = 0
+            self.anim_start()
         if key == b'l':
-            self.camera.pitch = 0
-            self.camera.yaw = -90
-            self.update_camera_position()
+            self.camera_target.pitch = 0
+            self.camera_target.yaw = -90
+            self.anim_start()
 
         if key == b'u':
-            self.camera.pitch = -90
-            self.camera.yaw = 90
-            self.update_camera_position()
+            self.camera_target.pitch = -90
+            self.camera_target.yaw = 90
+            self.anim_start()
         if key == b'i':
-            self.camera.pitch = 90
-            self.camera.yaw = 90
-            self.update_camera_position()
+            self.camera_target.pitch = 90
+            self.camera_target.yaw = 90
+            self.anim_start()
 
         if key == b'y':
-            self.camera.reset_tumble()
-            self.update_camera_position()
+            self.camera_target.reset_tumble()
+            self.anim_start()
 
         if key == b'-':
             self.camera.zoom(1, self.scroll_factor)
@@ -907,11 +998,6 @@ void main() {
         GLUT.glutPostRedisplay()
 
 
-    def update_camera_position(self):
-        self.camera.update()
-        self.update_state()
-
-
     def model_visible_layers(self):
         """
         Generate of currently displayed model layers.
@@ -921,7 +1007,7 @@ void main() {
             yield self.model[n]
 
 
-    def frame_visible_model(self):
+    def frame_visible_model(self, anim=True):
         bbox = Bbox()
 
         for layer in self.model_visible_layers():
@@ -943,22 +1029,19 @@ void main() {
                 self.model[self.draw_layer_max].max_segment.start_time
             ) * self.explode_scale
 
-        self.camera.frame(bbox)
-
+        self.camera_target.frame(bbox)
         if self.explode:
-            self.camera.distance *= 1.2
-
-        self.update_camera_position()
+            self.camera_target.distance *= 1.2
+        if anim:
+            self.anim_start()
+        else:
+            self.camera = self.camera_target.copy()
+            self.update_camera_position
 
 
     def frame_reference(self):
-        self.camera.frame(self.reference_bbox)
-        self.update_camera_position()
-
-
-    def move_aim(self, aim):
-        self.camera.aim = np.array(aim, dtype="float32")
-        self.update_camera_position()
+        self.camera_target.frame(self.reference_bbox)
+        self.anim_start()
 
 
     def move_camera(
@@ -1164,7 +1247,7 @@ void main() {
             self.set_state(state)
         else:
             self.update_model_draw(layer=SpecialLayer.LAST)
-            self.frame_visible_model()
+            self.frame_visible_model(anim=False)
 
 
     def analyse_model(self):
@@ -1261,19 +1344,6 @@ void main() {
         for (start, end) in self.lines_reference:
             self.reference_bbox.update(start)
             self.reference_bbox.update(end)
-
-
-    def idle(self):
-        now = time.time()
-        if (
-                self.state and
-                self.state != self.last_save_state and
-                self.last_update_time and
-                now > self.last_update_time + UPDATE_DELAY_SECONDS
-        ):
-            self.save_state()
-        else:
-            GLUT.glutPostRedisplay()
 
 
     def set_state(self, state) -> None:
@@ -1417,7 +1487,7 @@ void main() {
         self.load_line_buffer()
         self.update_model_position()
 
-        GLUT.glutDisplayFunc(self._display)
+        GLUT.glutDisplayFunc(self.display)
         GLUT.glutIdleFunc(self.idle)
         GLUT.glutReshapeFunc(self.reshape)
         GLUT.glutKeyboardFunc(self.keyboard)
