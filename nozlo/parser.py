@@ -603,8 +603,10 @@ class Parser():
                     raise NotImplementedError(f"G91: {values}")
                 self.relative = True
             elif command == "G92":
-                if values == {"E": "0"}:
-                    self.extrusion = 0
+                if set(values.keys()) == {"E"}:
+                    value = float(values.pop("E"))
+                    if value:
+                        raise NotImplementedError(f"G92: {values}")
                 else:
                     raise NotImplementedError(f"G92: {values}")
             elif command == "M92":
