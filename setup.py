@@ -37,10 +37,10 @@ setuptools.setup(
         "Operating System :: OS Independent",
     ],
     install_requires=[
-        "appdirs"
-        "numpy"
+        "appdirs",
+        "numpy",
         "pyopengl",
-        "yaml",
+        "pyyaml",
     ],
     python_requires='>=3',
     scripts=[
